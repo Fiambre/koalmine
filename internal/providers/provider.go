@@ -46,11 +46,11 @@ const (
 // URL, API key), so the settings UI can render a form for it generically
 // instead of every provider needing bespoke UI.
 type ConfigField struct {
-	Key         string
-	Label       string
-	Kind        FieldKind
-	Placeholder string
-	Required    bool
+	Key         string    `json:"key"`
+	Label       string    `json:"label"`
+	Kind        FieldKind `json:"kind"`
+	Placeholder string    `json:"placeholder"`
+	Required    bool      `json:"required"`
 }
 
 // Config holds the values a provider instance was configured with, keyed by

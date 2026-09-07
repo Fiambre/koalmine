@@ -1,79 +1,79 @@
 <script lang="ts">
-  import logo from './assets/images/logo-universal.png'
-  import {Greet} from '../wailsjs/go/main/App.js'
+  import Settings from './lib/Settings.svelte'
 
-  let resultText: string = "Please enter your name below 👇"
-  let name: string
-
-  function greet(): void {
-    Greet(name).then(result => resultText = result)
-  }
+  let view: 'tasks' | 'settings' = 'tasks'
 </script>
 
 <main>
-  <img alt="Wails logo" id="logo" src="{logo}">
-  <div class="result" id="result">{resultText}</div>
-  <div class="input-box" id="input">
-    <input autocomplete="off" bind:value={name} class="input" id="name" type="text"/>
-    <button class="btn" on:click={greet}>Greet</button>
-  </div>
+  <nav>
+    <span class="brand">Koalmine</span>
+    <button class:active={view === 'tasks'} on:click={() => (view = 'tasks')}>Tareas</button>
+    <button class:active={view === 'settings'} on:click={() => (view = 'settings')}>Configuración</button>
+  </nav>
+
+  {#if view === 'tasks'}
+    <section class="empty-state">
+      <p>Todavía no hay tareas para mostrar.</p>
+      <p class="hint">Configurá al menos un proveedor para empezar a ver tus tareas acá.</p>
+      <button class="primary" on:click={() => (view = 'settings')}>Ir a Configuración</button>
+    </section>
+  {:else}
+    <Settings />
+  {/if}
 </main>
 
 <style>
-
-  #logo {
-    display: block;
-    width: 50%;
-    height: 50%;
-    margin: auto;
-    padding: 10% 0 0;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: 100% 100%;
-    background-origin: content-box;
+  main {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    text-align: left;
   }
 
-  .result {
-    height: 20px;
-    line-height: 20px;
-    margin: 1.5rem auto;
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  .input-box .btn {
-    width: 60px;
-    height: 30px;
-    line-height: 30px;
-    border-radius: 3px;
+  .brand {
+    font-weight: 700;
+    margin-right: 1rem;
+  }
+
+  nav button {
     border: none;
-    margin: 0 0 0 20px;
-    padding: 0 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    padding: 0.4rem 0.75rem;
+    border-radius: 4px;
     cursor: pointer;
   }
 
-  .input-box .btn:hover {
-    background-image: linear-gradient(to top, #cfd9df 0%, #e2ebf0 100%);
-    color: #333333;
+  nav button.active {
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
   }
 
-  .input-box .input {
+  .empty-state {
+    text-align: center;
+    margin: auto;
+    padding: 2rem;
+  }
+
+  .hint {
+    opacity: 0.7;
+  }
+
+  .empty-state button.primary {
     border: none;
-    border-radius: 3px;
-    outline: none;
-    height: 30px;
-    line-height: 30px;
-    padding: 0 10px;
-    background-color: rgba(240, 240, 240, 1);
-    -webkit-font-smoothing: antialiased;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    background: #3d7bfd;
+    color: white;
+    margin-top: 0.5rem;
   }
-
-  .input-box .input:hover {
-    border: none;
-    background-color: rgba(255, 255, 255, 1);
-  }
-
-  .input-box .input:focus {
-    border: none;
-    background-color: rgba(255, 255, 255, 1);
-  }
-
 </style>
