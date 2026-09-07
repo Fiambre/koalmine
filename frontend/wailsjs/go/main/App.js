@@ -6,8 +6,20 @@ export function GetPollIntervalMinutes() {
   return window['go']['main']['App']['GetPollIntervalMinutes']();
 }
 
+export function GetTasks() {
+  return window['go']['main']['App']['GetTasks']();
+}
+
 export function ListProviders() {
   return window['go']['main']['App']['ListProviders']();
+}
+
+export function OpenURL(arg1) {
+  return window['go']['main']['App']['OpenURL'](arg1);
+}
+
+export function RefreshNow() {
+  return window['go']['main']['App']['RefreshNow']();
 }
 
 export function SaveProviderConfig(arg1, arg2, arg3) {

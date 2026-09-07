@@ -3,26 +3,62 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"koalmine/internal/poller"
 	"koalmine/internal/providers"
 	"koalmine/internal/store"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx    context.Context
+	poller *poller.Poller
+
+	tasksMu sync.RWMutex
+	tasks   []providers.TaskItem
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{poller: poller.New()}
 }
 
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
+// startup is called when the app starts. The context is saved so we can
+// call the runtime methods, and it kicks off the background poller —
+// its OnUpdate callback caches the latest snapshot for GetTasks and emits
+// a "tasks:updated" event so the frontend refreshes without polling itself.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	a.poller.OnUpdate = func(items []providers.TaskItem) {
+		a.tasksMu.Lock()
+		a.tasks = items
+		a.tasksMu.Unlock()
+		wailsRuntime.EventsEmit(ctx, "tasks:updated", items)
+	}
+	go a.poller.Run(ctx)
+}
+
+// GetTasks returns the last known snapshot of tasks across every enabled
+// provider. Empty until the first poll completes.
+func (a *App) GetTasks() []providers.TaskItem {
+	a.tasksMu.RLock()
+	defer a.tasksMu.RUnlock()
+	return a.tasks
+}
+
+// RefreshNow triggers an immediate poll instead of waiting for the next tick.
+func (a *App) RefreshNow() {
+	go a.poller.PollNow(a.ctx)
+}
+
+// OpenURL opens the given URL in the user's default browser.
+func (a *App) OpenURL(url string) {
+	wailsRuntime.BrowserOpenURL(a.ctx, url)
 }
 
 // ProviderInfo describes one provider for the settings UI: its static
@@ -139,26 +175,13 @@ func (a *App) TestConnection(providerName string, values map[string]string) erro
 }
 
 func (a *App) resolveProviderConfig(p providers.Provider, providerName string, values map[string]string) (providers.Config, error) {
-	cfg, err := store.Load()
+	resolved, err := store.ResolveConfig(p, providerName)
 	if err != nil {
 		return nil, err
 	}
-	pc := cfg.Providers[providerName]
-
-	resolved := providers.Config{}
 	for _, field := range p.ConfigFields() {
 		if v, ok := values[field.Key]; ok && v != "" {
 			resolved[field.Key] = v
-			continue
-		}
-		if field.Kind == providers.FieldSecret {
-			secret, err := store.GetSecret(providerName, field.Key)
-			if err != nil {
-				return nil, err
-			}
-			resolved[field.Key] = secret
-		} else {
-			resolved[field.Key] = pc.Values[field.Key]
 		}
 	}
 	return resolved, nil

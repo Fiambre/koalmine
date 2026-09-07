@@ -26,6 +26,8 @@ func onTrayReady() {
 	systray.SetTooltip("Koalmine — tus tareas")
 
 	mShow := systray.AddMenuItem("Mostrar", "Mostrar la ventana principal")
+	mRefresh := systray.AddMenuItem("Actualizar ahora", "Buscar tareas nuevas ahora")
+	mSettings := systray.AddMenuItem("Configuración", "Abrir la configuración de proveedores")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Salir", "Cerrar Koalmine")
 
@@ -37,6 +39,15 @@ func onTrayReady() {
 			case <-mShow.ClickedCh:
 				if app.ctx != nil {
 					wailsRuntime.WindowShow(app.ctx)
+				}
+			case <-mRefresh.ClickedCh:
+				if app.ctx != nil {
+					app.RefreshNow()
+				}
+			case <-mSettings.ClickedCh:
+				if app.ctx != nil {
+					wailsRuntime.WindowShow(app.ctx)
+					wailsRuntime.EventsEmit(app.ctx, "navigate", "settings")
 				}
 			case <-mQuit.ClickedCh:
 				if app.ctx != nil {

@@ -22,15 +22,15 @@ const (
 // every provider.
 type TaskItem struct {
 	// ID is stable and unique within its provider; used for notification dedup.
-	ID        string
-	Provider  string
-	Type      ItemType
-	Title     string
-	URL       string
-	Project   string
-	Status    string
-	Author    string
-	UpdatedAt time.Time
+	ID        string    `json:"id"`
+	Provider  string    `json:"provider"`
+	Type      ItemType  `json:"type"`
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	Project   string    `json:"project"`
+	Status    string    `json:"status"`
+	Author    string    `json:"author"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // FieldKind describes how a ConfigField's value should be captured and rendered.

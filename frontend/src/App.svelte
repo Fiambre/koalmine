@@ -1,7 +1,20 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte'
   import Settings from './lib/Settings.svelte'
+  import TaskList from './lib/TaskList.svelte'
+  import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
 
   let view: 'tasks' | 'settings' = 'tasks'
+
+  onMount(() => {
+    EventsOn('navigate', (target: string) => {
+      if (target === 'tasks' || target === 'settings') view = target
+    })
+  })
+
+  onDestroy(() => {
+    EventsOff('navigate')
+  })
 </script>
 
 <main>
@@ -12,11 +25,7 @@
   </nav>
 
   {#if view === 'tasks'}
-    <section class="empty-state">
-      <p>Todavía no hay tareas para mostrar.</p>
-      <p class="hint">Configurá al menos un proveedor para empezar a ver tus tareas acá.</p>
-      <button class="primary" on:click={() => (view = 'settings')}>Ir a Configuración</button>
-    </section>
+    <TaskList />
   {:else}
     <Settings />
   {/if}
@@ -55,25 +64,5 @@
   nav button.active {
     background: rgba(255, 255, 255, 0.12);
     color: white;
-  }
-
-  .empty-state {
-    text-align: center;
-    margin: auto;
-    padding: 2rem;
-  }
-
-  .hint {
-    opacity: 0.7;
-  }
-
-  .empty-state button.primary {
-    border: none;
-    border-radius: 4px;
-    padding: 0.5rem 1rem;
-    cursor: pointer;
-    background: #3d7bfd;
-    color: white;
-    margin-top: 0.5rem;
   }
 </style>
