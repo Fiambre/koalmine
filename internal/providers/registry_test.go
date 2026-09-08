@@ -7,7 +7,7 @@ func TestRegistryListIncludesBuiltinProviders(t *testing.T) {
 	for _, p := range List() {
 		names[p.Name()] = true
 	}
-	for _, want := range []string{"redmine", "github"} {
+	for _, want := range []string{"redmine", "github", "gitlab"} {
 		if !names[want] {
 			t.Errorf("expected provider %q to be registered", want)
 		}
