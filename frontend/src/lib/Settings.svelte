@@ -1,13 +1,17 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import {
     ListProviders,
     SaveProviderConfig,
     TestConnection,
     GetAutostartEnabled,
     SetAutostartEnabled,
+    GetAppVersion,
+    GetUpdateStatus,
+    ApplyUpdate,
   } from '../../wailsjs/go/main/App.js'
-  import type { main } from '../../wailsjs/go/models'
+  import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
+  import type { main, updater } from '../../wailsjs/go/models'
 
   type Status = { kind: 'idle' | 'testing' | 'ok' | 'error' | 'saving' | 'saved'; message?: string }
 
@@ -17,6 +21,10 @@
 
   let autostart = false
   let autostartStatus: Status = { kind: 'idle' }
+
+  let appVersion = ''
+  let updateInfo: updater.Info | null = null
+  let updateStatus: Status = { kind: 'idle' }
 
   // Per-provider draft form state, keyed by provider name.
   let drafts: Record<string, Record<string, string>> = {}
@@ -34,6 +42,8 @@
         statusByProvider[p.name] = { kind: 'idle' }
       }
       autostart = await GetAutostartEnabled()
+      appVersion = await GetAppVersion()
+      updateInfo = await GetUpdateStatus()
     } catch (e) {
       loadError = String(e)
     } finally {
@@ -41,7 +51,26 @@
     }
   }
 
-  onMount(load)
+  onMount(() => {
+    load()
+    EventsOn('update:available', async () => {
+      updateInfo = await GetUpdateStatus()
+    })
+  })
+
+  onDestroy(() => {
+    EventsOff('update:available')
+  })
+
+  async function applyUpdate() {
+    updateStatus = { kind: 'saving' }
+    try {
+      await ApplyUpdate()
+      // On success the app quits and relaunches itself — nothing left to update here.
+    } catch (e) {
+      updateStatus = { kind: 'error', message: String(e) }
+    }
+  }
 
   async function toggleAutostart() {
     autostartStatus = { kind: 'saving' }
@@ -94,6 +123,21 @@
         <span class="status ok">{autostartStatus.message}</span>
       {:else if autostartStatus.kind === 'error'}
         <span class="status error">{autostartStatus.message}</span>
+      {/if}
+    </article>
+
+    <article class="provider-card">
+      <p class="version-line">Versión actual: <strong>{appVersion}</strong></p>
+      {#if updateInfo?.available}
+        <p class="update-banner">
+          Hay una versión nueva disponible: <strong>{updateInfo.version}</strong>
+          <button class="primary" on:click={applyUpdate} disabled={updateStatus.kind === 'saving'}>
+            {updateStatus.kind === 'saving' ? 'Actualizando…' : 'Actualizar ahora'}
+          </button>
+        </p>
+        {#if updateStatus.kind === 'error'}
+          <span class="status error">{updateStatus.message}</span>
+        {/if}
       {/if}
     </article>
 
@@ -163,6 +207,20 @@
 
   .hint {
     opacity: 0.7;
+  }
+
+  .version-line {
+    margin: 0;
+    font-size: 0.85rem;
+    opacity: 0.8;
+  }
+
+  .update-banner {
+    margin: 0.5rem 0 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9rem;
   }
 
   .provider-card {

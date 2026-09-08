@@ -10,9 +10,12 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"koalmine/internal/autostart"
+	"koalmine/internal/notify"
 	"koalmine/internal/poller"
 	"koalmine/internal/providers"
 	"koalmine/internal/store"
+	"koalmine/internal/updater"
+	"koalmine/internal/version"
 )
 
 // App struct
@@ -22,6 +25,13 @@ type App struct {
 
 	tasksMu sync.RWMutex
 	tasks   []providers.TaskItem
+
+	updateMu     sync.RWMutex
+	latestUpdate updater.Info
+
+	// onUpdateAvailable, set by tray.go, lets the tray menu react when a
+	// new version is found without app.go needing to know about systray.
+	onUpdateAvailable func(updater.Info)
 }
 
 // NewApp creates a new App application struct
@@ -57,6 +67,83 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	go a.poller.Run(ctx)
+	go a.watchForUpdates(ctx)
+}
+
+// watchForUpdates checks for a newer release on startup, then again every
+// updater.CheckInterval, until ctx is cancelled.
+func (a *App) watchForUpdates(ctx context.Context) {
+	a.checkForUpdate(ctx)
+
+	ticker := time.NewTicker(updater.CheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.checkForUpdate(ctx)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *App) checkForUpdate(ctx context.Context) {
+	info, err := updater.Check(ctx)
+	if err != nil {
+		log.Printf("updater: %v", err)
+		return
+	}
+
+	a.updateMu.Lock()
+	a.latestUpdate = info
+	a.updateMu.Unlock()
+
+	if !info.Available {
+		return
+	}
+
+	wailsRuntime.EventsEmit(ctx, "update:available", info.Version)
+	if err := notify.Send("Actualización disponible", "Koalmine "+info.Version+" está disponible."); err != nil {
+		log.Printf("no se pudo enviar la notificación de actualización: %v", err)
+	}
+	if a.onUpdateAvailable != nil {
+		a.onUpdateAvailable(info)
+	}
+}
+
+// GetAppVersion returns the running version, e.g. "0.1.0".
+func (a *App) GetAppVersion() string {
+	return version.Current
+}
+
+// GetUpdateStatus returns the result of the most recent update check.
+func (a *App) GetUpdateStatus() updater.Info {
+	a.updateMu.RLock()
+	defer a.updateMu.RUnlock()
+	return a.latestUpdate
+}
+
+// ApplyUpdate downloads and applies the update found by the most recent
+// check, then relaunches the app and quits the current instance. Errors if
+// no update is currently known to be available.
+func (a *App) ApplyUpdate() error {
+	a.updateMu.RLock()
+	info := a.latestUpdate
+	a.updateMu.RUnlock()
+
+	if !info.Available {
+		return fmt.Errorf("no hay ninguna actualización disponible")
+	}
+
+	if err := updater.Apply(a.ctx, info.DownloadURL); err != nil {
+		return err
+	}
+	if err := updater.Relaunch(); err != nil {
+		return err
+	}
+
+	wailsRuntime.Quit(a.ctx)
+	return nil
 }
 
 // GetTasks returns the last known snapshot of tasks across every enabled
