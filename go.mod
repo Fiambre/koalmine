@@ -1,12 +1,14 @@
 module koalmine
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/gen2brain/beeep v0.11.2
 	github.com/getlantern/systray v1.2.2
+	github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
 	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/mod v0.41.0
 	golang.org/x/sys v0.46.0
 )
 
