@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"koalmine/internal/autostart"
 	"koalmine/internal/poller"
 	"koalmine/internal/providers"
 	"koalmine/internal/store"
@@ -28,17 +30,31 @@ func NewApp() *App {
 }
 
 // startup is called when the app starts. The context is saved so we can
-// call the runtime methods, and it kicks off the background poller —
-// its OnUpdate callback caches the latest snapshot for GetTasks and emits
-// a "tasks:updated" event so the frontend refreshes without polling itself.
+// call the runtime methods. It loads the last cached snapshot of tasks so
+// the window has something to show immediately (rather than "Cargando…" on
+// every launch), then kicks off the background poller — its OnUpdate
+// callback replaces that cache with the fresh snapshot, persists it for the
+// next launch, and emits a "tasks:updated" event so the frontend refreshes
+// without polling itself.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	if cached, err := store.LoadCachedTasks(); err != nil {
+		log.Printf("no se pudo cargar el caché de tareas: %v", err)
+	} else {
+		a.tasksMu.Lock()
+		a.tasks = cached
+		a.tasksMu.Unlock()
+	}
 
 	a.poller.OnUpdate = func(items []providers.TaskItem) {
 		a.tasksMu.Lock()
 		a.tasks = items
 		a.tasksMu.Unlock()
 		wailsRuntime.EventsEmit(ctx, "tasks:updated", items)
+		if err := store.SaveCachedTasks(items); err != nil {
+			log.Printf("no se pudo guardar el caché de tareas: %v", err)
+		}
 	}
 	go a.poller.Run(ctx)
 }
@@ -185,6 +201,20 @@ func (a *App) resolveProviderConfig(p providers.Provider, providerName string, v
 		}
 	}
 	return resolved, nil
+}
+
+// GetAutostartEnabled reports whether Koalmine is registered to launch when
+// the user logs in.
+func (a *App) GetAutostartEnabled() (bool, error) {
+	return autostart.IsEnabled()
+}
+
+// SetAutostartEnabled registers or unregisters Koalmine to launch at login.
+func (a *App) SetAutostartEnabled(enabled bool) error {
+	if enabled {
+		return autostart.Enable()
+	}
+	return autostart.Disable()
 }
 
 // GetPollIntervalMinutes returns how often (in minutes) the poller checks

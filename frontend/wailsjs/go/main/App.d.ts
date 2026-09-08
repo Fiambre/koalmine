@@ -3,6 +3,8 @@
 import {providers} from '../models';
 import {main} from '../models';
 
+export function GetAutostartEnabled():Promise<boolean>;
+
 export function GetPollIntervalMinutes():Promise<number>;
 
 export function GetTasks():Promise<Array<providers.TaskItem>>;
@@ -14,6 +16,8 @@ export function OpenURL(arg1:string):Promise<void>;
 export function RefreshNow():Promise<void>;
 
 export function SaveProviderConfig(arg1:string,arg2:boolean,arg3:Record<string, string>):Promise<void>;
+
+export function SetAutostartEnabled(arg1:boolean):Promise<void>;
 
 export function SetPollIntervalMinutes(arg1:number):Promise<void>;
 

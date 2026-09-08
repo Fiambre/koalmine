@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { ListProviders, SaveProviderConfig, TestConnection } from '../../wailsjs/go/main/App.js'
+  import {
+    ListProviders,
+    SaveProviderConfig,
+    TestConnection,
+    GetAutostartEnabled,
+    SetAutostartEnabled,
+  } from '../../wailsjs/go/main/App.js'
   import type { main } from '../../wailsjs/go/models'
 
   type Status = { kind: 'idle' | 'testing' | 'ok' | 'error' | 'saving' | 'saved'; message?: string }
@@ -8,6 +14,9 @@
   let providerList: main.ProviderInfo[] = []
   let loading = true
   let loadError = ''
+
+  let autostart = false
+  let autostartStatus: Status = { kind: 'idle' }
 
   // Per-provider draft form state, keyed by provider name.
   let drafts: Record<string, Record<string, string>> = {}
@@ -24,6 +33,7 @@
         enabledDrafts[p.name] = p.enabled
         statusByProvider[p.name] = { kind: 'idle' }
       }
+      autostart = await GetAutostartEnabled()
     } catch (e) {
       loadError = String(e)
     } finally {
@@ -32,6 +42,20 @@
   }
 
   onMount(load)
+
+  async function toggleAutostart() {
+    autostartStatus = { kind: 'saving' }
+    try {
+      await SetAutostartEnabled(autostart)
+      autostartStatus = {
+        kind: 'saved',
+        message: autostart ? 'Se iniciará junto con el sistema.' : 'Ya no se inicia con el sistema.',
+      }
+    } catch (e) {
+      autostart = !autostart
+      autostartStatus = { kind: 'error', message: String(e) }
+    }
+  }
 
   async function testConnection(p: main.ProviderInfo) {
     statusByProvider[p.name] = { kind: 'testing' }
@@ -56,13 +80,25 @@
 </script>
 
 <section class="settings">
-  <h2>Proveedores</h2>
-
   {#if loading}
     <p class="hint">Cargando…</p>
   {:else if loadError}
     <p class="status error">No se pudo cargar la configuración: {loadError}</p>
   {:else}
+    <article class="provider-card">
+      <label class="enable-toggle">
+        <input type="checkbox" bind:checked={autostart} on:change={toggleAutostart} disabled={autostartStatus.kind === 'saving'} />
+        <strong>Iniciar con el sistema</strong>
+      </label>
+      {#if autostartStatus.kind === 'saved'}
+        <span class="status ok">{autostartStatus.message}</span>
+      {:else if autostartStatus.kind === 'error'}
+        <span class="status error">{autostartStatus.message}</span>
+      {/if}
+    </article>
+
+    <h2>Proveedores</h2>
+
     {#each providerList as p (p.name)}
       <article class="provider-card">
         <header>
