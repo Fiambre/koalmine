@@ -1,5 +1,10 @@
 Unicode true
 
+## Install per-user (no admin required) so the running app can self-update
+## by overwriting its own executable without needing UAC elevation.
+!define WAILS_INSTALL_SCOPE "user"
+!define REQUEST_EXECUTION_LEVEL "user"
+
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
 ## mentioned underneath.

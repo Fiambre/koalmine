@@ -7,7 +7,14 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "",
+    "name": "Rodrigo Guerrero",
     "email": ""
+  },
+  "info": {
+    "companyName": "Rodrigo Guerrero",
+    "productName": "Koalmine",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 Rodrigo Guerrero",
+    "comments": "Tus tareas de Redmine, GitHub y más, a mano en el system tray."
   }
 }
