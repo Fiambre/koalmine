@@ -12,8 +12,16 @@
   } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { main, updater } from '../../wailsjs/go/models'
+  import { ACCENT_COLORS, loadAccent, saveAccent } from './theme'
 
   type Status = { kind: 'idle' | 'testing' | 'ok' | 'error' | 'saving' | 'saved'; message?: string }
+
+  let selectedAccent = loadAccent()
+
+  function selectAccent(hex: string) {
+    selectedAccent = hex
+    saveAccent(hex)
+  }
 
   let providerList: main.ProviderInfo[] = []
   let loading = true
@@ -115,6 +123,29 @@
     <p class="status error">No se pudo cargar la configuración: {loadError}</p>
   {:else}
     <article class="provider-card">
+      <h2 class="card-title">Apariencia</h2>
+      <p class="hint small">Color de acento</p>
+      <div class="swatches">
+        {#each ACCENT_COLORS as color (color.value)}
+          <button
+            class="swatch"
+            class:selected={selectedAccent === color.value}
+            style="background: {color.value}"
+            title={color.name}
+            aria-label={color.name}
+            on:click={() => selectAccent(color.value)}
+          >
+            {#if selectedAccent === color.value}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="white" stroke-width="3">
+                <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            {/if}
+          </button>
+        {/each}
+      </div>
+    </article>
+
+    <article class="provider-card">
       <label class="enable-toggle">
         <input type="checkbox" bind:checked={autostart} on:change={toggleAutostart} disabled={autostartStatus.kind === 'saving'} />
         <strong>Iniciar con el sistema</strong>
@@ -196,23 +227,36 @@
 <style>
   .settings {
     text-align: left;
-    max-width: 560px;
+    max-width: 640px;
     margin: 0 auto;
-    padding: 1.5rem;
+    padding: 2rem 2.5rem;
   }
 
   h2 {
-    margin-top: 0;
+    margin: 1.5rem 0 0.75rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+
+  .card-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 700;
   }
 
   .hint {
-    opacity: 0.7;
+    color: var(--text-faint);
+  }
+
+  .hint.small {
+    font-size: 0.8rem;
+    margin: 0 0 0.6rem;
   }
 
   .version-line {
     margin: 0;
     font-size: 0.85rem;
-    opacity: 0.8;
+    color: var(--text-muted);
   }
 
   .update-banner {
@@ -224,60 +268,137 @@
   }
 
   .provider-card {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 1rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.1rem;
     margin-bottom: 1rem;
+  }
+
+  .swatches {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+
+  .swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    box-shadow: 0 0 0 2px var(--bg-elevated);
+  }
+
+  .swatch.selected {
+    box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--text-muted);
   }
 
   .enable-toggle {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
     cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .enable-toggle input[type='checkbox'] {
+    appearance: none;
+    width: 34px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--bg-elevated-hover);
+    border: 1px solid var(--border);
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+  }
+
+  .enable-toggle input[type='checkbox']::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text);
+    transition: transform 0.15s ease;
+  }
+
+  .enable-toggle input[type='checkbox']:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .enable-toggle input[type='checkbox']:checked::after {
+    transform: translateX(14px);
   }
 
   .fields {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    margin-top: 0.75rem;
+    margin-top: 0.9rem;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.3rem;
     font-size: 0.85rem;
+    color: var(--text-muted);
   }
 
   .field input {
-    padding: 0.4rem 0.5rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.9);
-    color: #1b2636;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent);
   }
 
   footer {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-top: 1rem;
+    margin-top: 1.1rem;
   }
 
   button {
     border: none;
-    border-radius: 4px;
-    padding: 0.4rem 0.9rem;
+    border-radius: var(--radius-sm);
+    padding: 0.45rem 0.9rem;
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.15);
-    color: white;
+    background: var(--bg-elevated-hover);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+  }
+
+  button:hover:not(:disabled) {
+    background: var(--border);
   }
 
   button.primary {
-    background: #3d7bfd;
+    background: var(--accent);
+    color: white;
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
 
   button:disabled {
@@ -290,7 +411,7 @@
   }
 
   .status.ok {
-    color: #7be08f;
+    color: var(--success);
   }
 
   .status.error {

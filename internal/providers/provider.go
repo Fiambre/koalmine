@@ -22,15 +22,16 @@ const (
 // every provider.
 type TaskItem struct {
 	// ID is stable and unique within its provider; used for notification dedup.
-	ID        string    `json:"id"`
-	Provider  string    `json:"provider"`
-	Type      ItemType  `json:"type"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	Project   string    `json:"project"`
-	Status    string    `json:"status"`
-	Author    string    `json:"author"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	Provider    string    `json:"provider"`
+	Type        ItemType  `json:"type"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	Project     string    `json:"project"`
+	Status      string    `json:"status"`
+	Author      string    `json:"author"`
+	Description string    `json:"description"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // FieldKind describes how a ConfigField's value should be captured and rendered.
@@ -57,6 +58,17 @@ type ConfigField struct {
 // ConfigField.Key.
 type Config map[string]string
 
+// CreateItemInput holds what's needed to create a new issue on a provider.
+// Project identifies where to create it — its exact shape is
+// provider-specific (a Redmine project identifier, a GitHub "owner/repo", a
+// GitLab project path or numeric ID); ProjectHint on the Provider describes
+// the expected shape for the UI.
+type CreateItemInput struct {
+	Project     string
+	Title       string
+	Description string
+}
+
 // Provider is implemented by every task-source connector. Each
 // implementation self-registers into the package Registry from its own
 // init(), so adding a new connector never requires touching this file or
@@ -73,6 +85,12 @@ type Provider interface {
 	// FetchItems returns the caller's current assigned issues/work items,
 	// PRs/MRs where they're reviewer, and mentions.
 	FetchItems(ctx context.Context, cfg Config) ([]TaskItem, error)
+	// ProjectHint describes, for the "new task" form, what shape this
+	// provider expects CreateItemInput.Project to be in (e.g. "owner/repo").
+	ProjectHint() string
+	// CreateItem creates a new issue on the provider, assigned to the
+	// authenticated user, and returns it in the unified TaskItem shape.
+	CreateItem(ctx context.Context, cfg Config, input CreateItemInput) (TaskItem, error)
 }
 
 func defaultHTTPClient() *http.Client {

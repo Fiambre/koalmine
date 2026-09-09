@@ -1,5 +1,23 @@
 export namespace main {
 	
+	export class CreateTaskInput {
+	    provider: string;
+	    project: string;
+	    title: string;
+	    description: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateTaskInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.project = source["project"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	    }
+	}
 	export class ProviderInfo {
 	    name: string;
 	    displayName: string;
@@ -7,6 +25,7 @@ export namespace main {
 	    enabled: boolean;
 	    values: Record<string, string>;
 	    secretsSet: Record<string, boolean>;
+	    projectHint: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProviderInfo(source);
@@ -20,6 +39,7 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.values = source["values"];
 	        this.secretsSet = source["secretsSet"];
+	        this.projectHint = source["projectHint"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -74,6 +94,7 @@ export namespace providers {
 	    project: string;
 	    status: string;
 	    author: string;
+	    description: string;
 	    // Go type: time
 	    updatedAt: any;
 	
@@ -91,6 +112,7 @@ export namespace providers {
 	        this.project = source["project"];
 	        this.status = source["status"];
 	        this.author = source["author"];
+	        this.description = source["description"];
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	    }
 	

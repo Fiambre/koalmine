@@ -1,10 +1,13 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -35,6 +38,10 @@ func (p *gitlabProvider) ConfigFields() []ConfigField {
 		{Key: "base_url", Label: "URL de la instancia (vacío = gitlab.com)", Kind: FieldURL, Placeholder: "https://gitlab.miempresa.com"},
 		{Key: "token", Label: "Personal Access Token", Kind: FieldSecret, Required: true},
 	}
+}
+
+func (p *gitlabProvider) ProjectHint() string {
+	return "namespace/proyecto o ID numérico (ej: grupo/proyecto)"
 }
 
 func (p *gitlabProvider) TestConnection(ctx context.Context, cfg Config) error {
@@ -84,7 +91,7 @@ type gitlabUser struct {
 }
 
 func (p *gitlabProvider) currentUser(ctx context.Context, cfg Config) (gitlabUser, error) {
-	req, err := p.newRequest(ctx, cfg, "/user")
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/user", nil)
 	if err != nil {
 		return gitlabUser{}, err
 	}
@@ -107,7 +114,7 @@ func (p *gitlabProvider) currentUser(ctx context.Context, cfg Config) (gitlabUse
 }
 
 func (p *gitlabProvider) list(ctx context.Context, cfg Config, path string, itemType ItemType) ([]TaskItem, error) {
-	req, err := p.newRequest(ctx, cfg, path)
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -129,27 +136,79 @@ func (p *gitlabProvider) list(ctx context.Context, cfg Config, path string, item
 
 	items := make([]TaskItem, 0, len(raw))
 	for _, it := range raw {
-		updatedAt, _ := time.Parse(time.RFC3339, it.UpdatedAt)
-		items = append(items, TaskItem{
-			// Issues and merge requests have independent ID sequences in
-			// GitLab's API, so the item type must be part of the key —
-			// otherwise an issue and an MR that happen to share a numeric
-			// ID would collide.
-			ID:        fmt.Sprintf("gitlab:%s:%d", itemType, it.ID),
-			Provider:  "gitlab",
-			Type:      itemType,
-			Title:     it.Title,
-			URL:       it.WebURL,
-			Project:   projectFromReference(it.References.Full),
-			Status:    it.State,
-			Author:    it.Author.Username,
-			UpdatedAt: updatedAt,
-		})
+		items = append(items, gitlabToTaskItem(it, itemType))
 	}
 	return items, nil
 }
 
-func (p *gitlabProvider) newRequest(ctx context.Context, cfg Config, path string) (*http.Request, error) {
+// CreateItem creates a GitLab issue under the given project path/ID,
+// assigned to the authenticated user so it shows up on the next poll.
+func (p *gitlabProvider) CreateItem(ctx context.Context, cfg Config, input CreateItemInput) (TaskItem, error) {
+	if input.Project == "" {
+		return TaskItem{}, fmt.Errorf("falta el proyecto")
+	}
+	if input.Title == "" {
+		return TaskItem{}, fmt.Errorf("falta el título")
+	}
+
+	me, err := p.currentUser(ctx, cfg)
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"title":        input.Title,
+		"description":  input.Description,
+		"assignee_ids": []int{me.ID},
+	})
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	path := "/projects/" + url.PathEscape(input.Project) + "/issues"
+	req, err := p.newRequest(ctx, cfg, http.MethodPost, path, bytes.NewReader(payload))
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return TaskItem{}, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return TaskItem{}, fmt.Errorf("GitLab respondió %s al crear la tarea", resp.Status)
+	}
+
+	var it gitlabItem
+	if err := json.NewDecoder(resp.Body).Decode(&it); err != nil {
+		return TaskItem{}, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+	return gitlabToTaskItem(it, ItemTypeIssue), nil
+}
+
+func gitlabToTaskItem(it gitlabItem, itemType ItemType) TaskItem {
+	updatedAt, _ := time.Parse(time.RFC3339, it.UpdatedAt)
+	return TaskItem{
+		// Issues and merge requests have independent ID sequences in
+		// GitLab's API, so the item type must be part of the key —
+		// otherwise an issue and an MR that happen to share a numeric
+		// ID would collide.
+		ID:          fmt.Sprintf("gitlab:%s:%d", itemType, it.ID),
+		Provider:    "gitlab",
+		Type:        itemType,
+		Title:       it.Title,
+		URL:         it.WebURL,
+		Project:     projectFromReference(it.References.Full),
+		Status:      it.State,
+		Author:      it.Author.Username,
+		Description: it.Description,
+		UpdatedAt:   updatedAt,
+	}
+}
+
+func (p *gitlabProvider) newRequest(ctx context.Context, cfg Config, method, path string, body io.Reader) (*http.Request, error) {
 	if cfg["token"] == "" {
 		return nil, fmt.Errorf("falta el Personal Access Token de GitLab")
 	}
@@ -159,12 +218,15 @@ func (p *gitlabProvider) newRequest(ctx context.Context, cfg Config, path string
 		baseURL = override + "/api/v4"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("PRIVATE-TOKEN", cfg["token"])
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	return req, nil
 }
 
@@ -178,12 +240,13 @@ func projectFromReference(full string) string {
 }
 
 type gitlabItem struct {
-	ID        int    `json:"id"`
-	Title     string `json:"title"`
-	WebURL    string `json:"web_url"`
-	State     string `json:"state"`
-	UpdatedAt string `json:"updated_at"`
-	Author    struct {
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	WebURL      string `json:"web_url"`
+	State       string `json:"state"`
+	UpdatedAt   string `json:"updated_at"`
+	Author      struct {
 		Username string `json:"username"`
 	} `json:"author"`
 	References struct {

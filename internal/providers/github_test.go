@@ -61,6 +61,61 @@ func TestGithubFetchItemsDeduplicatesAcrossQueries(t *testing.T) {
 	if items[1].Project != "acme/repo" {
 		t.Errorf("unexpected project name: %s", items[1].Project)
 	}
+	if items[1].Description != "Descripción de PR para revisar" {
+		t.Errorf("unexpected description: %q", items[1].Description)
+	}
+}
+
+func TestGithubCreateItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("missing/incorrect Authorization header: %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "rodrigo"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/repo/issues":
+			var body struct {
+				Title     string   `json:"title"`
+				Body      string   `json:"body"`
+				Assignees []string `json:"assignees"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+			if body.Title != "Nueva tarea" || len(body.Assignees) != 1 || body.Assignees[0] != "rodrigo" {
+				t.Errorf("unexpected request body: %+v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(issueFixture(99, "Nueva tarea", false))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	item, err := p.CreateItem(context.Background(), Config{"token": "secret"}, CreateItemInput{
+		Project:     "acme/repo",
+		Title:       "Nueva tarea",
+		Description: "Detalle",
+	})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+	if item.ID != "github:99" || item.Type != ItemTypeIssue || item.Project != "acme/repo" {
+		t.Errorf("unexpected item: %+v", item)
+	}
+}
+
+func TestGithubCreateItemInvalidProject(t *testing.T) {
+	p := &githubProvider{client: defaultHTTPClient(), baseURL: githubAPIBase}
+	_, err := p.CreateItem(context.Background(), Config{"token": "secret"}, CreateItemInput{Project: "not-a-repo", Title: "x"})
+	if err == nil {
+		t.Error("expected an error when project isn't in owner/repo form")
+	}
 }
 
 func TestGithubFetchItemsMissingToken(t *testing.T) {
@@ -74,6 +129,7 @@ func issueFixture(id int, title string, isPR bool) map[string]any {
 	f := map[string]any{
 		"id":             id,
 		"title":          title,
+		"body":           "Descripción de " + title,
 		"html_url":       "https://github.com/acme/repo/issues/" + strconv.Itoa(id),
 		"state":          "open",
 		"updated_at":     "2026-09-01T10:00:00Z",

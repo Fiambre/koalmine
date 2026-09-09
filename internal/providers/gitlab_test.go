@@ -10,13 +10,14 @@ import (
 
 func gitlabItemFixture(id int, title, refFull string) map[string]any {
 	return map[string]any{
-		"id":         id,
-		"title":      title,
-		"web_url":    "https://gitlab.com/acme/repo/-/issues/" + refFull,
-		"state":      "opened",
-		"updated_at": "2026-09-01T10:00:00Z",
-		"author":     map[string]any{"username": "rodrigo"},
-		"references": map[string]any{"full": refFull},
+		"id":          id,
+		"title":       title,
+		"description": "Descripción de " + title,
+		"web_url":     "https://gitlab.com/acme/repo/-/issues/" + refFull,
+		"state":       "opened",
+		"updated_at":  "2026-09-01T10:00:00Z",
+		"author":      map[string]any{"username": "rodrigo"},
+		"references":  map[string]any{"full": refFull},
 	}
 }
 
@@ -63,11 +64,58 @@ func TestGitlabFetchItemsDedupesReviewerAndAssigned(t *testing.T) {
 	if items[0].ID != "gitlab:issue:1" || items[0].Type != ItemTypeIssue || items[0].Project != "acme/repo" {
 		t.Errorf("unexpected issue item: %+v", items[0])
 	}
+	if items[0].Description != "Descripción de Bug asignado" {
+		t.Errorf("unexpected description: %q", items[0].Description)
+	}
 	if items[1].ID != "gitlab:pr:2" || items[1].Type != ItemTypePR {
 		t.Errorf("unexpected assigned-MR item: %+v", items[1])
 	}
 	if items[2].ID != "gitlab:pr:3" || items[2].Type != ItemTypePR {
 		t.Errorf("unexpected reviewer-MR item: %+v", items[2])
+	}
+}
+
+func TestGitlabCreateItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PRIVATE-TOKEN") != "secret" {
+			t.Errorf("missing/incorrect PRIVATE-TOKEN header: %q", r.Header.Get("PRIVATE-TOKEN"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "username": "rodrigo"})
+		case r.Method == http.MethodPost && r.URL.Path == "/projects/grupo/proyecto/issues":
+			var body struct {
+				Title       string `json:"title"`
+				Description string `json:"description"`
+				AssigneeIDs []int  `json:"assignee_ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+			if body.Title != "Nueva tarea" || len(body.AssigneeIDs) != 1 || body.AssigneeIDs[0] != 7 {
+				t.Errorf("unexpected request body: %+v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(gitlabItemFixture(99, "Nueva tarea", "grupo/proyecto#99"))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	item, err := p.CreateItem(context.Background(), Config{"token": "secret"}, CreateItemInput{
+		Project:     "grupo/proyecto",
+		Title:       "Nueva tarea",
+		Description: "Detalle",
+	})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+	if item.ID != "gitlab:issue:99" || item.Type != ItemTypeIssue || item.Project != "grupo/proyecto" {
+		t.Errorf("unexpected item: %+v", item)
 	}
 }
 

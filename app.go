@@ -164,6 +164,54 @@ func (a *App) OpenURL(url string) {
 	wailsRuntime.BrowserOpenURL(a.ctx, url)
 }
 
+// CreateTaskInput is what the "new task" form in the frontend submits.
+type CreateTaskInput struct {
+	Provider    string `json:"provider"`
+	Project     string `json:"project"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+// CreateTask creates a new issue on the given provider, assigned to the
+// authenticated user. It's merged into the current in-memory snapshot and
+// broadcast immediately, rather than waiting for the next poll cycle, so it
+// shows up in the list right away.
+func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
+	p, ok := providers.Get(input.Provider)
+	if !ok {
+		return providers.TaskItem{}, fmt.Errorf("proveedor desconocido: %s", input.Provider)
+	}
+
+	resolved, err := store.ResolveConfig(p, input.Provider)
+	if err != nil {
+		return providers.TaskItem{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+
+	item, err := p.CreateItem(ctx, resolved, providers.CreateItemInput{
+		Project:     input.Project,
+		Title:       input.Title,
+		Description: input.Description,
+	})
+	if err != nil {
+		return providers.TaskItem{}, err
+	}
+
+	a.tasksMu.Lock()
+	a.tasks = append([]providers.TaskItem{item}, a.tasks...)
+	snapshot := a.tasks
+	a.tasksMu.Unlock()
+
+	wailsRuntime.EventsEmit(a.ctx, "tasks:updated", snapshot)
+	if err := store.SaveCachedTasks(snapshot); err != nil {
+		log.Printf("no se pudo guardar el caché de tareas: %v", err)
+	}
+
+	return item, nil
+}
+
 // ProviderInfo describes one provider for the settings UI: its static
 // metadata (name, config fields) plus its current configuration state.
 // Secret field values are never sent to the frontend — only whether one
@@ -175,6 +223,7 @@ type ProviderInfo struct {
 	Enabled     bool                    `json:"enabled"`
 	Values      map[string]string       `json:"values"`
 	SecretsSet  map[string]bool         `json:"secretsSet"`
+	ProjectHint string                  `json:"projectHint"`
 }
 
 // ListProviders returns every registered provider with its current
@@ -197,6 +246,7 @@ func (a *App) ListProviders() ([]ProviderInfo, error) {
 			Enabled:     pc.Enabled,
 			Values:      map[string]string{},
 			SecretsSet:  map[string]bool{},
+			ProjectHint: p.ProjectHint(),
 		}
 
 		for _, field := range fields {
