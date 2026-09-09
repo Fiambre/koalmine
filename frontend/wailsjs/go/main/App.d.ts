@@ -18,6 +18,8 @@ export function GetTasks():Promise<Array<providers.TaskItem>>;
 
 export function GetUpdateStatus():Promise<updater.Info>;
 
+export function ListProjects(arg1:string):Promise<Array<providers.ProjectOption>>;
+
 export function ListProviders():Promise<Array<main.ProviderInfo>>;
 
 export function OpenURL(arg1:string):Promise<void>;
@@ -25,6 +27,8 @@ export function OpenURL(arg1:string):Promise<void>;
 export function RefreshNow():Promise<void>;
 
 export function SaveProviderConfig(arg1:string,arg2:boolean,arg3:Record<string, string>):Promise<void>;
+
+export function SearchTasks(arg1:string):Promise<Array<providers.TaskItem>>;
 
 export function SetAutostartEnabled(arg1:boolean):Promise<void>;
 

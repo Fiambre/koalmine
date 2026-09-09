@@ -79,8 +79,111 @@ func (p *gitlabProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem
 				continue
 			}
 			seen[item.ID] = true
+			item.CreatedByMe = item.Author == me.Username
 			items = append(items, item)
 		}
+	}
+	return items, nil
+}
+
+// ListProjects returns the projects the user is a member of, for the "new
+// task" form's project dropdown. Capped at the first 100 (sorted by most
+// recent activity) — the form's free-text fallback covers anything beyond
+// that.
+func (p *gitlabProvider) ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error) {
+	path := "/projects?membership=true&per_page=100&order_by=last_activity_at&simple=true"
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab respondió %s", resp.Status)
+	}
+
+	var repos []struct {
+		PathWithNamespace string `json:"path_with_namespace"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+
+	options := make([]ProjectOption, 0, len(repos))
+	for _, r := range repos {
+		options = append(options, ProjectOption{Value: r.PathWithNamespace, Label: r.PathWithNamespace})
+	}
+	return options, nil
+}
+
+// SearchItems runs a free-text search across every issue and merge request
+// the user has access to — open or closed — unlike FetchItems, which only
+// covers currently-open items assigned to (or awaiting review from) them.
+func (p *gitlabProvider) SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	me, err := p.currentUser(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	issues, err := p.searchScope(ctx, cfg, "issues", query, ItemTypeIssue)
+	if err != nil {
+		return nil, err
+	}
+	mrs, err := p.searchScope(ctx, cfg, "merge_requests", query, ItemTypePR)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool, len(issues)+len(mrs))
+	items := make([]TaskItem, 0, len(issues)+len(mrs))
+	for _, group := range [][]TaskItem{issues, mrs} {
+		for _, item := range group {
+			if seen[item.ID] {
+				continue
+			}
+			seen[item.ID] = true
+			item.CreatedByMe = item.Author == me.Username
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (p *gitlabProvider) searchScope(ctx context.Context, cfg Config, scope, query string, itemType ItemType) ([]TaskItem, error) {
+	path := "/search?scope=" + scope + "&search=" + url.QueryEscape(query)
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab respondió %s", resp.Status)
+	}
+
+	var raw []gitlabItem
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+
+	items := make([]TaskItem, 0, len(raw))
+	for _, it := range raw {
+		items = append(items, gitlabToTaskItem(it, itemType))
 	}
 	return items, nil
 }
@@ -185,7 +288,9 @@ func (p *gitlabProvider) CreateItem(ctx context.Context, cfg Config, input Creat
 	if err := json.NewDecoder(resp.Body).Decode(&it); err != nil {
 		return TaskItem{}, fmt.Errorf("respuesta inválida de GitLab: %w", err)
 	}
-	return gitlabToTaskItem(it, ItemTypeIssue), nil
+	item := gitlabToTaskItem(it, ItemTypeIssue)
+	item.CreatedByMe = true
+	return item, nil
 }
 
 func gitlabToTaskItem(it gitlabItem, itemType ItemType) TaskItem {

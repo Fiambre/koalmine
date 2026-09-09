@@ -16,9 +16,14 @@ func TestGithubFetchItemsDeduplicatesAcrossQueries(t *testing.T) {
 			t.Errorf("missing/incorrect Authorization header: %q", r.Header.Get("Authorization"))
 		}
 
-		q := r.URL.Query().Get("q")
 		w.Header().Set("Content-Type", "application/json")
 
+		if r.URL.Path == "/user" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "rodrigo"})
+			return
+		}
+
+		q := r.URL.Query().Get("q")
 		switch {
 		case strings.Contains(q, "assignee:@me"):
 			// Item 1: assigned to me.
@@ -63,6 +68,73 @@ func TestGithubFetchItemsDeduplicatesAcrossQueries(t *testing.T) {
 	}
 	if items[1].Description != "Descripción de PR para revisar" {
 		t.Errorf("unexpected description: %q", items[1].Description)
+	}
+	if !items[0].CreatedByMe {
+		t.Errorf("expected item 1 to be marked as created by me (author matches the authenticated login)")
+	}
+}
+
+func TestGithubListProjects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user/repos" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"full_name": "acme/repo"},
+			{"full_name": "acme/other"},
+		})
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	options, err := p.ListProjects(context.Background(), Config{"token": "secret"})
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(options) != 2 || options[0].Value != "acme/repo" {
+		t.Errorf("unexpected options: %+v", options)
+	}
+}
+
+func TestGithubSearchItems(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.URL.Path == "/user" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "rodrigo"})
+			return
+		}
+
+		q := r.URL.Query().Get("q")
+		if !strings.Contains(q, "build") || !strings.Contains(q, "involves:@me") {
+			t.Errorf("unexpected query: %s", q)
+		}
+		_ = json.NewEncoder(w).Encode(githubFixture(issueFixture(5, "Arreglar el build", false)))
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	items, err := p.SearchItems(context.Background(), Config{"token": "secret"}, "build")
+	if err != nil {
+		t.Fatalf("SearchItems: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "github:5" {
+		t.Fatalf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Errorf("expected item to be marked as created by me")
+	}
+}
+
+func TestGithubSearchItemsEmptyQuery(t *testing.T) {
+	p := &githubProvider{client: defaultHTTPClient(), baseURL: githubAPIBase}
+	items, err := p.SearchItems(context.Background(), Config{"token": "secret"}, "   ")
+	if err != nil {
+		t.Fatalf("SearchItems: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected no items for a blank query, got %d", len(items))
 	}
 }
 

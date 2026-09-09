@@ -85,10 +85,101 @@ func (p *githubProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem
 			items = append(items, item)
 		}
 	}
+
+	// Best-effort: if this fails, CreatedByMe just stays false for every
+	// item rather than failing the whole fetch over a secondary field.
+	login, _ := p.currentLogin(ctx, cfg)
+	if login != "" {
+		for i := range items {
+			items[i].CreatedByMe = items[i].Author == login
+		}
+	}
 	return items, nil
 }
 
 func (p *githubProvider) search(ctx context.Context, cfg Config, query string, itemType ItemType) ([]TaskItem, error) {
+	issues, err := p.rawSearch(ctx, cfg, query)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TaskItem, 0, len(issues))
+	for _, issue := range issues {
+		resolvedType := itemType
+		if issue.PullRequest != nil && itemType == ItemTypeIssue {
+			resolvedType = ItemTypePR
+		}
+		items = append(items, githubToTaskItem(issue, resolvedType))
+	}
+	return items, nil
+}
+
+// SearchItems runs a free-text search across every issue/PR the user is
+// involved in (author, assignee, mentioned, or commenter) — open or closed
+// — unlike FetchItems, which only covers currently-open, currently-assigned
+// items.
+func (p *githubProvider) SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	login, _ := p.currentLogin(ctx, cfg)
+
+	issues, err := p.rawSearch(ctx, cfg, query+" involves:@me")
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TaskItem, 0, len(issues))
+	for _, issue := range issues {
+		itemType := ItemTypeIssue
+		if issue.PullRequest != nil {
+			itemType = ItemTypePR
+		}
+		item := githubToTaskItem(issue, itemType)
+		item.CreatedByMe = login != "" && item.Author == login
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// ListProjects returns the repos the user owns, collaborates on, or belongs
+// to via an organization, for the "new task" form's project dropdown. Capped
+// at the first 100 (sorted by most recently updated) — the form's free-text
+// fallback covers anything beyond that.
+func (p *githubProvider) ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error) {
+	path := "/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member"
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub respondió %s", resp.Status)
+	}
+
+	var repos []struct {
+		FullName string `json:"full_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitHub: %w", err)
+	}
+
+	options := make([]ProjectOption, 0, len(repos))
+	for _, r := range repos {
+		options = append(options, ProjectOption{Value: r.FullName, Label: r.FullName})
+	}
+	return options, nil
+}
+
+func (p *githubProvider) rawSearch(ctx context.Context, cfg Config, query string) ([]githubIssue, error) {
 	path := "/search/issues?q=" + url.QueryEscape(query) + "&per_page=50&sort=updated&order=desc"
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
 	if err != nil {
@@ -109,16 +200,7 @@ func (p *githubProvider) search(ctx context.Context, cfg Config, query string, i
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, fmt.Errorf("respuesta inválida de GitHub: %w", err)
 	}
-
-	items := make([]TaskItem, 0, len(parsed.Items))
-	for _, issue := range parsed.Items {
-		resolvedType := itemType
-		if issue.PullRequest != nil && itemType == ItemTypeIssue {
-			resolvedType = ItemTypePR
-		}
-		items = append(items, githubToTaskItem(issue, resolvedType))
-	}
-	return items, nil
+	return parsed.Items, nil
 }
 
 // CreateItem creates a GitHub issue under the given "owner/repo", assigned
@@ -165,7 +247,9 @@ func (p *githubProvider) CreateItem(ctx context.Context, cfg Config, input Creat
 	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
 		return TaskItem{}, fmt.Errorf("respuesta inválida de GitHub: %w", err)
 	}
-	return githubToTaskItem(issue, ItemTypeIssue), nil
+	item := githubToTaskItem(issue, ItemTypeIssue)
+	item.CreatedByMe = true
+	return item, nil
 }
 
 func (p *githubProvider) currentLogin(ctx context.Context, cfg Config) (string, error) {

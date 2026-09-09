@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -79,10 +80,110 @@ func (p *redmineProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskIte
 		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
+	// Best-effort: if this fails, CreatedByMe just stays false for every
+	// item rather than failing the whole fetch over a secondary field.
+	userID, _ := p.currentUserID(ctx, cfg)
+
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
 	items := make([]TaskItem, 0, len(parsed.Issues))
 	for _, issue := range parsed.Issues {
-		items = append(items, redmineToTaskItem(issue, baseURL))
+		item := redmineToTaskItem(issue, baseURL)
+		item.CreatedByMe = userID != 0 && issue.Author.ID == userID
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// ListProjects returns every project the API key's user has access to, for
+// the "new task" form's project dropdown.
+func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error) {
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/projects.json?limit=100", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		Projects []struct {
+			Identifier string `json:"identifier"`
+			Name       string `json:"name"`
+		} `json:"projects"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	options := make([]ProjectOption, 0, len(parsed.Projects))
+	for _, pr := range parsed.Projects {
+		options = append(options, ProjectOption{Value: pr.Identifier, Label: pr.Name})
+	}
+	return options, nil
+}
+
+// SearchItems runs a full-text search across every issue the user has
+// access to (not just ones assigned to them), via Redmine's own search
+// endpoint. Redmine's search results don't include author info, so
+// CreatedByMe can't be computed here — it stays false, unlike FetchItems.
+func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	path := "/search.json?q=" + url.QueryEscape(query) + "&issues=1&limit=25"
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		Results []struct {
+			ID          int    `json:"id"`
+			Title       string `json:"title"`
+			Type        string `json:"type"`
+			URL         string `json:"url"`
+			Description string `json:"description"`
+			Datetime    string `json:"datetime"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	items := make([]TaskItem, 0, len(parsed.Results))
+	for _, r := range parsed.Results {
+		if r.Type != "issue" {
+			continue
+		}
+		updatedAt, _ := time.Parse(time.RFC3339, r.Datetime)
+		items = append(items, TaskItem{
+			ID:          fmt.Sprintf("redmine:%d", r.ID),
+			Provider:    "redmine",
+			Type:        ItemTypeIssue,
+			Title:       r.Title,
+			URL:         r.URL,
+			Description: r.Description,
+			UpdatedAt:   updatedAt,
+		})
 	}
 	return items, nil
 }
@@ -136,7 +237,9 @@ func (p *redmineProvider) CreateItem(ctx context.Context, cfg Config, input Crea
 		return TaskItem{}, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
-	return redmineToTaskItem(parsed.Issue, strings.TrimRight(cfg["base_url"], "/")), nil
+	item := redmineToTaskItem(parsed.Issue, strings.TrimRight(cfg["base_url"], "/"))
+	item.CreatedByMe = true
+	return item, nil
 }
 
 func (p *redmineProvider) currentUserID(ctx context.Context, cfg Config) (int, error) {
@@ -219,6 +322,7 @@ type redmineIssue struct {
 		Name string `json:"name"`
 	} `json:"status"`
 	Author struct {
+		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"author"`
 }

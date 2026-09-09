@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,6 +166,24 @@ func (a *App) OpenURL(url string) {
 	wailsRuntime.BrowserOpenURL(a.ctx, url)
 }
 
+// ListProjects returns the projects/repos the given provider's authenticated
+// user can create a task in, for the "new task" form's project dropdown.
+func (a *App) ListProjects(providerName string) ([]providers.ProjectOption, error) {
+	p, ok := providers.Get(providerName)
+	if !ok {
+		return nil, fmt.Errorf("proveedor desconocido: %s", providerName)
+	}
+
+	resolved, err := store.ResolveConfig(p, providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return p.ListProjects(ctx, resolved)
+}
+
 // CreateTaskInput is what the "new task" form in the frontend submits.
 type CreateTaskInput struct {
 	Provider    string `json:"provider"`
@@ -210,6 +230,47 @@ func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
 	}
 
 	return item, nil
+}
+
+// SearchTasks runs a free-text search against every enabled provider (not
+// just the cached snapshot), merging and sorting the results the same way
+// the poller does. Errors from individual providers are logged and skipped
+// rather than failing the whole search, so one misbehaving provider doesn't
+// block results from the others.
+func (a *App) SearchTasks(query string) ([]providers.TaskItem, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []providers.TaskItem{}, nil
+	}
+
+	cfg, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	var all []providers.TaskItem
+	for _, p := range providers.List() {
+		pc, ok := cfg.Providers[p.Name()]
+		if !ok || !pc.Enabled {
+			continue
+		}
+
+		resolved, err := store.ResolveConfig(p, p.Name())
+		if err != nil {
+			log.Printf("search: %s: %v", p.Name(), err)
+			continue
+		}
+
+		items, err := p.SearchItems(a.ctx, resolved, query)
+		if err != nil {
+			log.Printf("search: %s: %v", p.Name(), err)
+			continue
+		}
+		all = append(all, items...)
+	}
+
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
+	return all, nil
 }
 
 // ProviderInfo describes one provider for the settings UI: its static

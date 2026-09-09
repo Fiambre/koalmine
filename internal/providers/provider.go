@@ -22,15 +22,20 @@ const (
 // every provider.
 type TaskItem struct {
 	// ID is stable and unique within its provider; used for notification dedup.
-	ID          string    `json:"id"`
-	Provider    string    `json:"provider"`
-	Type        ItemType  `json:"type"`
-	Title       string    `json:"title"`
-	URL         string    `json:"url"`
-	Project     string    `json:"project"`
-	Status      string    `json:"status"`
-	Author      string    `json:"author"`
-	Description string    `json:"description"`
+	ID          string   `json:"id"`
+	Provider    string   `json:"provider"`
+	Type        ItemType `json:"type"`
+	Title       string   `json:"title"`
+	URL         string   `json:"url"`
+	Project     string   `json:"project"`
+	Status      string   `json:"status"`
+	Author      string   `json:"author"`
+	Description string   `json:"description"`
+	// CreatedByMe reports whether the authenticated user is this item's
+	// author/reporter — a best-effort signal computed by comparing the
+	// provider's own identity for the item against the current user, not a
+	// flag specific to items created through Koalmine's own "new task" form.
+	CreatedByMe bool      `json:"createdByMe"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
@@ -69,6 +74,15 @@ type CreateItemInput struct {
 	Description string
 }
 
+// ProjectOption is one entry in the "new task" form's project dropdown:
+// Value is what gets sent back as CreateItemInput.Project, Label is what's
+// shown to the user (the same string for GitHub/GitLab, a friendlier
+// display name for Redmine).
+type ProjectOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
 // Provider is implemented by every task-source connector. Each
 // implementation self-registers into the package Registry from its own
 // init(), so adding a new connector never requires touching this file or
@@ -88,9 +102,18 @@ type Provider interface {
 	// ProjectHint describes, for the "new task" form, what shape this
 	// provider expects CreateItemInput.Project to be in (e.g. "owner/repo").
 	ProjectHint() string
+	// ListProjects returns the projects/repos the user can create a task in,
+	// for the "new task" form's dropdown. May return a short or capped list
+	// (e.g. only the user's own repos, or the first page) — the form's free-
+	// text fallback covers whatever this doesn't.
+	ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error)
 	// CreateItem creates a new issue on the provider, assigned to the
 	// authenticated user, and returns it in the unified TaskItem shape.
 	CreateItem(ctx context.Context, cfg Config, input CreateItemInput) (TaskItem, error)
+	// SearchItems runs a free-text search against the provider itself (not
+	// just the locally cached snapshot), so it can surface older or closed
+	// items that FetchItems' "currently assigned to me" scope wouldn't.
+	SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error)
 }
 
 func defaultHTTPClient() *http.Client {

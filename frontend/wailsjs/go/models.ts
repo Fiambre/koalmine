@@ -85,6 +85,20 @@ export namespace providers {
 	        this.required = source["required"];
 	    }
 	}
+	export class ProjectOption {
+	    value: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectOption(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.value = source["value"];
+	        this.label = source["label"];
+	    }
+	}
 	export class TaskItem {
 	    id: string;
 	    provider: string;
@@ -95,6 +109,7 @@ export namespace providers {
 	    status: string;
 	    author: string;
 	    description: string;
+	    createdByMe: boolean;
 	    // Go type: time
 	    updatedAt: any;
 	
@@ -113,6 +128,7 @@ export namespace providers {
 	        this.status = source["status"];
 	        this.author = source["author"];
 	        this.description = source["description"];
+	        this.createdByMe = source["createdByMe"];
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	    }
 	

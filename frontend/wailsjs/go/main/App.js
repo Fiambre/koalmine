@@ -30,6 +30,10 @@ export function GetUpdateStatus() {
   return window['go']['main']['App']['GetUpdateStatus']();
 }
 
+export function ListProjects(arg1) {
+  return window['go']['main']['App']['ListProjects'](arg1);
+}
+
 export function ListProviders() {
   return window['go']['main']['App']['ListProviders']();
 }
@@ -44,6 +48,10 @@ export function RefreshNow() {
 
 export function SaveProviderConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveProviderConfig'](arg1, arg2, arg3);
+}
+
+export function SearchTasks(arg1) {
+  return window['go']['main']['App']['SearchTasks'](arg1);
 }
 
 export function SetAutostartEnabled(arg1) {

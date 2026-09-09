@@ -73,6 +73,78 @@ func TestGitlabFetchItemsDedupesReviewerAndAssigned(t *testing.T) {
 	if items[2].ID != "gitlab:pr:3" || items[2].Type != ItemTypePR {
 		t.Errorf("unexpected reviewer-MR item: %+v", items[2])
 	}
+	if !items[0].CreatedByMe {
+		t.Errorf("expected item 1 to be marked as created by me (author matches the authenticated username)")
+	}
+}
+
+func TestGitlabListProjects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"path_with_namespace": "grupo/proyecto"},
+			{"path_with_namespace": "grupo/otro"},
+		})
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	options, err := p.ListProjects(context.Background(), Config{"token": "secret"})
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(options) != 2 || options[0].Value != "grupo/proyecto" {
+		t.Errorf("unexpected options: %+v", options)
+	}
+}
+
+func TestGitlabSearchItems(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.URL.Path == "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "username": "rodrigo"})
+		case r.URL.Path == "/search" && r.URL.Query().Get("scope") == "issues":
+			if r.URL.Query().Get("search") != "build" {
+				t.Errorf("unexpected search term: %s", r.URL.Query().Get("search"))
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				gitlabItemFixture(1, "Arreglar el build", "acme/repo#1"),
+			})
+		case r.URL.Path == "/search" && r.URL.Query().Get("scope") == "merge_requests":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected request: %s %s", r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	items, err := p.SearchItems(context.Background(), Config{"token": "secret"}, "build")
+	if err != nil {
+		t.Fatalf("SearchItems: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "gitlab:issue:1" {
+		t.Fatalf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Errorf("expected item to be marked as created by me")
+	}
+}
+
+func TestGitlabSearchItemsEmptyQuery(t *testing.T) {
+	p := &gitlabProvider{client: defaultHTTPClient(), apiBase: gitlabAPIBase}
+	items, err := p.SearchItems(context.Background(), Config{"token": "secret"}, "  ")
+	if err != nil {
+		t.Fatalf("SearchItems: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected no items for a blank query, got %d", len(items))
+	}
 }
 
 func TestGitlabCreateItem(t *testing.T) {

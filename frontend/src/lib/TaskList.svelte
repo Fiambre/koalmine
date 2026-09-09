@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask } from '../../wailsjs/go/main/App.js'
+  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
+  import { starredIds, toggleStar } from './starred'
 
   type Filter = 'all' | 'issue' | 'pr' | 'mention'
 
@@ -27,9 +28,23 @@
   let formDescription = ''
   let creating = false
   let createError = ''
+  let projectOptions: providers.ProjectOption[] = []
+  let loadingProjects = false
+  let projectLoadError = ''
+  let manualProject = false
+
+  let searchQuery = ''
+  let searching = false
+  let searchError = ''
+  let searchResults: providers.TaskItem[] | null = null
+  let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+  let mineOnly = false
+  let starredOnly = false
 
   $: enabledProviders = providerList.filter((p) => p.enabled)
   $: formProviderInfo = enabledProviders.find((p) => p.name === formProvider) ?? null
+  $: showProjectDropdown = !manualProject && !loadingProjects && projectOptions.length > 0
 
   function onUpdated(items: providers.TaskItem[]) {
     tasks = items ?? []
@@ -75,6 +90,37 @@
     OpenURL(url)
   }
 
+  function onSearchInput() {
+    if (searchTimer) clearTimeout(searchTimer)
+    const q = searchQuery.trim()
+    if (!q) {
+      searchResults = null
+      searchError = ''
+      return
+    }
+    searchTimer = setTimeout(() => runSearch(q), 400)
+  }
+
+  async function runSearch(query: string) {
+    searching = true
+    searchError = ''
+    try {
+      searchResults = (await SearchTasks(query)) ?? []
+    } catch (e) {
+      searchError = String(e)
+      searchResults = []
+    } finally {
+      searching = false
+    }
+  }
+
+  function clearSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchQuery = ''
+    searchResults = null
+    searchError = ''
+  }
+
   function openForm() {
     if (!formProvider && enabledProviders.length > 0) {
       formProvider = enabledProviders[0].name
@@ -82,6 +128,30 @@
     createError = ''
     selected = null
     showForm = true
+    manualProject = false
+    if (formProvider) {
+      loadProjectOptions(formProvider)
+    }
+  }
+
+  function onProviderChange(e: Event) {
+    formProvider = (e.target as HTMLSelectElement).value
+    formProject = ''
+    manualProject = false
+    loadProjectOptions(formProvider)
+  }
+
+  async function loadProjectOptions(providerName: string) {
+    loadingProjects = true
+    projectLoadError = ''
+    projectOptions = []
+    try {
+      projectOptions = (await ListProjects(providerName)) ?? []
+    } catch (e) {
+      projectLoadError = String(e)
+    } finally {
+      loadingProjects = false
+    }
   }
 
   function closeForm() {
@@ -90,6 +160,9 @@
     formTitle = ''
     formDescription = ''
     createError = ''
+    projectOptions = []
+    projectLoadError = ''
+    manualProject = false
   }
 
   async function submitForm() {
@@ -116,12 +189,26 @@
     }
   }
 
-  $: filtered = filter === 'all' ? tasks : tasks.filter((t) => t.type === filter)
+  $: baseList = searchResults ?? tasks
+  $: filtered = baseList
+    .filter((t) => filter === 'all' || t.type === filter)
+    .filter((t) => !mineOnly || t.createdByMe)
+    .filter((t) => !starredOnly || $starredIds.has(t.id))
 </script>
 
 <section class="tasks">
   <header>
     <h1>Todas las tareas</h1>
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" stroke-linecap="round" />
+      </svg>
+      <input type="search" bind:value={searchQuery} on:input={onSearchInput} placeholder="Buscar tareas…" />
+      {#if searchQuery}
+        <button class="clear-search" on:click={clearSearch} title="Limpiar búsqueda">×</button>
+      {/if}
+    </div>
     <div class="header-actions">
       <button class="new-task" on:click={openForm} disabled={enabledProviders.length === 0} title={enabledProviders.length === 0 ? 'Configurá un proveedor primero' : 'Nueva tarea'}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -148,13 +235,27 @@
   </header>
 
   <div class="tabs">
-    {#each [['all', 'Todas'], ['issue', 'Issues'], ['pr', 'PRs'], ['mention', 'Menciones']] as [value, label] (value)}
-      <button class:active={filter === value} on:click={() => (filter = value as Filter)}>{label}</button>
-    {/each}
+    <div class="tabs-left">
+      {#each [['all', 'Todas'], ['issue', 'Issues'], ['pr', 'PRs'], ['mention', 'Menciones']] as [value, label] (value)}
+        <button class="tab-btn" class:active={filter === value} on:click={() => (filter = value as Filter)}>{label}</button>
+      {/each}
+    </div>
+    <div class="tabs-right">
+      <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>Creadas por mí</button>
+      <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>★ Favoritos</button>
+    </div>
   </div>
 
   {#if loadError}
     <p class="status error">No se pudieron cargar las tareas: {loadError}</p>
+  {/if}
+
+  {#if searchError}
+    <p class="status error">No se pudo buscar: {searchError}</p>
+  {:else if searchResults !== null}
+    <p class="search-status">
+      {#if searching}Buscando…{:else}{filtered.length} resultado{filtered.length === 1 ? '' : 's'} para “{searchQuery}”{/if}
+    </p>
   {/if}
 
   {#if !loadedOnce}
@@ -169,18 +270,31 @@
         {:else}
           {#each filtered as item (item.id)}
             <li>
-              <button
-                class="task"
-                class:selected={!showForm && selected?.id === item.id}
-                on:click={() => {
-                  showForm = false
-                  selected = item
-                }}
-              >
-                <span class="dot {item.type}"></span>
-                <span class="title">{item.title}</span>
-                <span class="meta">{item.project}</span>
-              </button>
+              <div class="task-row" class:selected={!showForm && selected?.id === item.id}>
+                <button
+                  class="task"
+                  on:click={() => {
+                    showForm = false
+                    selected = item
+                  }}
+                >
+                  <span class="dot {item.type}"></span>
+                  <span class="task-text">
+                    <span class="title">{item.title}</span>
+                    <span class="meta">{item.project}</span>
+                  </span>
+                </button>
+                <button
+                  class="star-btn"
+                  class:active={$starredIds.has(item.id)}
+                  on:click={() => toggleStar(item.id)}
+                  title={$starredIds.has(item.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                >
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill={$starredIds.has(item.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                    <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </li>
           {/each}
         {/if}
@@ -193,7 +307,7 @@
 
             <label class="form-field">
               <span>Proveedor</span>
-              <select bind:value={formProvider}>
+              <select value={formProvider} on:change={onProviderChange}>
                 {#each enabledProviders as p (p.name)}
                   <option value={p.name}>{p.displayName}</option>
                 {/each}
@@ -201,8 +315,30 @@
             </label>
 
             <label class="form-field">
-              <span>Proyecto{#if formProviderInfo} — {formProviderInfo.projectHint}{/if}</span>
-              <input type="text" bind:value={formProject} placeholder={formProviderInfo?.projectHint ?? ''} />
+              <span>Proyecto{#if formProviderInfo && !showProjectDropdown} — {formProviderInfo.projectHint}{/if}</span>
+              {#if loadingProjects}
+                <p class="hint small">Cargando proyectos…</p>
+              {:else if showProjectDropdown}
+                <select bind:value={formProject}>
+                  <option value="" disabled>Elegí un proyecto…</option>
+                  {#each projectOptions as opt (opt.value)}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                </select>
+                <button type="button" class="link-btn" on:click={() => { manualProject = true; formProject = '' }}>
+                  Escribir manualmente
+                </button>
+              {:else}
+                {#if projectLoadError}
+                  <p class="hint small">No se pudo cargar la lista de proyectos; escribilo manualmente.</p>
+                {/if}
+                <input type="text" bind:value={formProject} placeholder={formProviderInfo?.projectHint ?? ''} />
+                {#if projectOptions.length > 0}
+                  <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
+                    Elegir de la lista
+                  </button>
+                {/if}
+              {/if}
             </label>
 
             <label class="form-field">
@@ -231,12 +367,21 @@
             <article class="detail">
               <div class="detail-top">
                 <span class="badge {selected.type}">{typeLabels[selected.type] ?? selected.type}</span>
-                <span class="detail-status">{selected.status}</span>
+                {#if selected.status}<span class="detail-status">{selected.status}</span>{/if}
+                <button
+                  class="star-btn"
+                  class:active={$starredIds.has(selected.id)}
+                  on:click={() => toggleStar(selected!.id)}
+                  title={$starredIds.has(selected.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill={$starredIds.has(selected.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                    <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
+                  </svg>
+                </button>
               </div>
               <h2>{selected.title}</h2>
               <p class="detail-meta">
-                {selected.project} · {selected.provider}
-                {#if selected.author}· {selected.author}{/if}
+                {[selected.project, selected.provider, selected.author].filter(Boolean).join(' · ')}
               </p>
 
               {#if selected.description}
@@ -273,7 +418,6 @@
 
   header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     margin-bottom: 1.25rem;
     gap: 1rem;
@@ -283,12 +427,61 @@
   h1 {
     font-size: 1.4rem;
     font-weight: 700;
-    margin: 0;
+    margin: 0 auto 0 0;
+    flex-shrink: 0;
   }
 
   .header-actions {
     display: flex;
     gap: 0.6rem;
+  }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.7rem;
+    background: var(--bg-elevated);
+    width: 220px;
+    color: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .search-box input {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    outline: none;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search-box input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .clear-search {
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .clear-search:hover {
+    color: var(--text);
+  }
+
+  .search-status {
+    margin: 0 0 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-faint);
   }
 
   .status.error {
@@ -299,13 +492,24 @@
 
   .tabs {
     display: flex;
-    gap: 1.25rem;
+    justify-content: space-between;
+    align-items: flex-end;
     border-bottom: 1px solid var(--border);
     margin-bottom: 0;
     flex-shrink: 0;
   }
 
-  .tabs button {
+  .tabs-left,
+  .tabs-right {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .tabs-left {
+    gap: 1.25rem;
+  }
+
+  .tab-btn {
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -317,14 +521,36 @@
     margin-bottom: -1px;
   }
 
-  .tabs button:hover {
+  .tab-btn:hover {
     color: var(--text);
   }
 
-  .tabs button.active {
+  .tab-btn.active {
     color: var(--text);
     border-bottom-color: var(--accent);
     font-weight: 600;
+  }
+
+  .chip {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    padding: 0.2rem 0.65rem;
+    margin-bottom: 0.4rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-family: inherit;
+  }
+
+  .chip:hover {
+    color: var(--text);
+  }
+
+  .chip.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--text);
   }
 
   .refresh,
@@ -376,6 +602,27 @@
     color: var(--text-faint);
   }
 
+  .hint.small {
+    font-size: 0.8rem;
+    margin: 0;
+  }
+
+  .link-btn {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    font-size: 0.78rem;
+    margin-top: 0.3rem;
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
   .layout {
     flex: 1;
     display: flex;
@@ -399,32 +646,57 @@
     font-size: 0.85rem;
   }
 
-  .task {
-    width: 100%;
+  .task-row {
     display: flex;
-    align-items: center;
+    align-items: stretch;
+    border-radius: var(--radius-sm);
+  }
+
+  .task-row:hover {
+    background: var(--bg-elevated);
+  }
+
+  .task-row.selected {
+    background: var(--accent-soft);
+  }
+
+  .task-row.selected .title {
+    color: var(--accent);
+  }
+
+  .task {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
     gap: 0.6rem;
     text-align: left;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.6rem 0.6rem;
+    padding: 0.65rem 0.4rem 0.65rem 0.6rem;
     cursor: pointer;
     color: var(--text);
     font-family: inherit;
     font-size: 0.88rem;
   }
 
-  .task:hover {
-    background: var(--bg-elevated);
+  .star-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0 0.6rem;
+    color: var(--text-faint);
   }
 
-  .task.selected {
-    background: var(--accent-soft);
+  .star-btn:hover {
+    color: #f5c518;
   }
 
-  .task.selected .title {
-    color: var(--accent);
+  .star-btn.active {
+    color: #f5c518;
   }
 
   .dot {
@@ -432,6 +704,7 @@
     height: 9px;
     border-radius: 50%;
     flex-shrink: 0;
+    margin-top: 0.4rem;
     background: var(--text-faint);
   }
 
@@ -447,18 +720,23 @@
     background: #e58b2e;
   }
 
-  .title {
+  .task-text {
     flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .title {
+    white-space: normal;
+    overflow-wrap: break-word;
+    line-height: 1.35;
   }
 
   .meta {
     font-size: 0.75rem;
     color: var(--text-faint);
-    flex-shrink: 0;
-    max-width: 100px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -496,6 +774,11 @@
   .detail-status {
     font-size: 0.78rem;
     color: var(--text-faint);
+  }
+
+  .detail-top .star-btn {
+    margin-left: auto;
+    padding: 0;
   }
 
   .detail h2 {
