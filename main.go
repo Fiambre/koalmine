@@ -7,6 +7,8 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+
+	"koalmine/internal/notify"
 )
 
 //go:embed all:frontend/dist
@@ -16,6 +18,7 @@ var app *App
 
 func main() {
 	app = NewApp()
+	notify.Icon = trayIconOther
 	systray.Run(onTrayReady, onTrayExit)
 }
 
