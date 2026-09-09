@@ -3,7 +3,7 @@
   import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
-  import { starredIds, toggleStar } from './starred'
+  import { starredItems, toggleStar } from './starred'
 
   export let lockToStarred = false
 
@@ -43,6 +43,40 @@
 
   let mineOnly = false
   let starredOnly = lockToStarred
+
+  const VIEW_MODE_KEY = 'koalmine:viewMode'
+  function loadViewMode(): 'list' | 'table' {
+    try {
+      return localStorage.getItem(VIEW_MODE_KEY) === 'table' ? 'table' : 'list'
+    } catch {
+      return 'list'
+    }
+  }
+  let viewMode: 'list' | 'table' = loadViewMode()
+  function setViewMode(mode: 'list' | 'table') {
+    viewMode = mode
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode)
+    } catch {
+      // localStorage unavailable — the choice just won't persist across launches.
+    }
+  }
+
+  function relativeTime(iso: string): string {
+    const date = new Date(iso)
+    if (isNaN(date.getTime())) return ''
+    const minutes = Math.round((Date.now() - date.getTime()) / 60000)
+    if (minutes < 1) return 'ahora'
+    if (minutes < 60) return `hace ${minutes} min`
+    const hours = Math.round(minutes / 60)
+    if (hours < 24) return `hace ${hours} h`
+    const days = Math.round(hours / 24)
+    if (days < 30) return `hace ${days} d`
+    const months = Math.round(days / 30)
+    if (months < 12) return `hace ${months} mes${months === 1 ? '' : 'es'}`
+    const years = Math.round(months / 12)
+    return `hace ${years} año${years === 1 ? '' : 's'}`
+  }
 
   $: enabledProviders = providerList.filter((p) => p.enabled)
   $: formProviderInfo = enabledProviders.find((p) => p.name === formProvider) ?? null
@@ -191,11 +225,16 @@
     }
   }
 
-  $: baseList = searchResults ?? tasks
+  // A starred item may not be in the current "assigned to me" poll snapshot
+  // (it could've come from a search result, or fallen out of scope since) —
+  // prefer the live copy from tasks when there is one, so title/status stay
+  // fresh, but fall back to the snapshot saved at star-time otherwise.
+  $: starredList = Object.values($starredItems).map((saved) => tasks.find((t) => t.id === saved.id) ?? saved)
+  $: baseList = lockToStarred ? starredList : searchResults ?? tasks
   $: filtered = baseList
     .filter((t) => filter === 'all' || t.type === filter)
     .filter((t) => !mineOnly || t.createdByMe)
-    .filter((t) => !(starredOnly || lockToStarred) || $starredIds.has(t.id))
+    .filter((t) => !starredOnly || t.id in $starredItems)
 </script>
 
 <section class="tasks">
@@ -247,6 +286,19 @@
       {#if !lockToStarred}
         <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>★ Favoritos</button>
       {/if}
+      <div class="view-toggle">
+        <button class="view-btn" class:active={viewMode === 'list'} on:click={() => setViewMode('list')} title="Vista de lista">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button class="view-btn" class:active={viewMode === 'table'} on:click={() => setViewMode('table')} title="Vista de tabla">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M3 10h18M9 10v10" />
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -264,20 +316,12 @@
 
   {#if !loadedOnce}
     <p class="hint">Cargando…</p>
-  {:else}
+  {:else if viewMode === 'list'}
     <div class="layout">
       <ul class="list-pane">
         {#if filtered.length === 0}
           <li class="list-empty">
-            <p>
-              {#if lockToStarred}
-                Todavía no marcaste ninguna tarea. Tocá la ★ en una tarea para agregarla acá.
-              {:else if tasks.length === 0}
-                Todavía no hay tareas para mostrar.
-              {:else}
-                Nada en este filtro.
-              {/if}
-            </p>
+            <p>{@render emptyText()}</p>
           </li>
         {:else}
           {#each filtered as item (item.id)}
@@ -298,11 +342,11 @@
                 </button>
                 <button
                   class="star-btn"
-                  class:active={$starredIds.has(item.id)}
-                  on:click={() => toggleStar(item.id)}
-                  title={$starredIds.has(item.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                  class:active={item.id in $starredItems}
+                  on:click={() => toggleStar(item)}
+                  title={item.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
                 >
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill={$starredIds.has(item.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill={item.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
                     <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
                   </svg>
                 </button>
@@ -312,113 +356,177 @@
         {/if}
       </ul>
 
-      <div class="detail-pane">
-        {#if showForm}
-          <article class="detail">
-            <h2>Nueva tarea</h2>
-
-            <label class="form-field">
-              <span>Proveedor</span>
-              <select value={formProvider} on:change={onProviderChange}>
-                {#each enabledProviders as p (p.name)}
-                  <option value={p.name}>{p.displayName}</option>
-                {/each}
-              </select>
-            </label>
-
-            <label class="form-field">
-              <span>Proyecto{#if formProviderInfo && !showProjectDropdown} — {formProviderInfo.projectHint}{/if}</span>
-              {#if loadingProjects}
-                <p class="hint small">Cargando proyectos…</p>
-              {:else if showProjectDropdown}
-                <select bind:value={formProject}>
-                  <option value="" disabled>Elegí un proyecto…</option>
-                  {#each projectOptions as opt (opt.value)}
-                    <option value={opt.value}>{opt.label}</option>
-                  {/each}
-                </select>
-                <button type="button" class="link-btn" on:click={() => { manualProject = true; formProject = '' }}>
-                  Escribir manualmente
-                </button>
-              {:else}
-                {#if projectLoadError}
-                  <p class="hint small">No se pudo cargar la lista de proyectos; escribilo manualmente.</p>
-                {/if}
-                <input type="text" bind:value={formProject} placeholder={formProviderInfo?.projectHint ?? ''} />
-                {#if projectOptions.length > 0}
-                  <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
-                    Elegir de la lista
-                  </button>
-                {/if}
-              {/if}
-            </label>
-
-            <label class="form-field">
-              <span>Título</span>
-              <input type="text" bind:value={formTitle} placeholder="¿Qué hay que hacer?" />
-            </label>
-
-            <label class="form-field">
-              <span>Descripción</span>
-              <textarea bind:value={formDescription} rows="6" placeholder="Detalle opcional"></textarea>
-            </label>
-
-            {#if createError}
-              <p class="status error">{createError}</p>
-            {/if}
-
-            <div class="form-actions">
-              <button on:click={closeForm} disabled={creating}>Cancelar</button>
-              <button class="open-external" on:click={submitForm} disabled={creating}>
-                {creating ? 'Creando…' : 'Crear tarea'}
-              </button>
-            </div>
-          </article>
-        {:else if selected}
-          {#key selected.id}
-            <article class="detail">
-              <div class="detail-top">
-                <span class="badge {selected.type}">{typeLabels[selected.type] ?? selected.type}</span>
-                {#if selected.status}<span class="detail-status">{selected.status}</span>{/if}
-                <button
-                  class="star-btn"
-                  class:active={$starredIds.has(selected.id)}
-                  on:click={() => toggleStar(selected!.id)}
-                  title={$starredIds.has(selected.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
-                >
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill={$starredIds.has(selected.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
-                    <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              </div>
-              <h2>{selected.title}</h2>
-              <p class="detail-meta">
-                {[selected.project, selected.provider, selected.author].filter(Boolean).join(' · ')}
-              </p>
-
-              {#if selected.description}
-                <pre class="description">{selected.description}</pre>
-              {:else}
-                <p class="hint">Sin descripción.</p>
-              {/if}
-
-              <button class="primary open-external" on:click={() => openExternal(selected!.url)}>
-                Abrir en el navegador
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M7 17 17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </article>
-          {/key}
+      <div class="detail-pane">{@render detailContent()}</div>
+    </div>
+  {:else}
+    <div class="table-layout">
+      <div class="table-wrap">
+        {#if filtered.length === 0}
+          <p class="list-empty">{@render emptyText()}</p>
         {:else}
-          <div class="detail-empty">
-            <p>Seleccioná una tarea para ver el detalle.</p>
-          </div>
+          <table>
+            <thead>
+              <tr>
+                <th class="th-dot"></th>
+                <th>Título</th>
+                <th>Proyecto</th>
+                <th>Estado</th>
+                <th>Actualizado</th>
+                <th class="th-star"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filtered as item (item.id)}
+                <tr
+                  class:selected={!showForm && selected?.id === item.id}
+                  on:click={() => {
+                    showForm = false
+                    selected = item
+                  }}
+                >
+                  <td><span class="dot {item.type}"></span></td>
+                  <td class="cell-title">{item.title}</td>
+                  <td class="cell-muted">{item.project}</td>
+                  <td class="cell-muted">{item.status}</td>
+                  <td class="cell-muted">{relativeTime(item.updatedAt)}</td>
+                  <td>
+                    <button
+                      class="star-btn"
+                      class:active={item.id in $starredItems}
+                      on:click|stopPropagation={() => toggleStar(item)}
+                      title={item.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill={item.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                        <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         {/if}
       </div>
+
+      <div class="table-detail">{@render detailContent()}</div>
     </div>
   {/if}
 </section>
+
+{#snippet emptyText()}
+  {#if lockToStarred}
+    Todavía no marcaste ninguna tarea. Tocá la ★ en una tarea para agregarla acá.
+  {:else if tasks.length === 0}
+    Todavía no hay tareas para mostrar.
+  {:else}
+    Nada en este filtro.
+  {/if}
+{/snippet}
+
+{#snippet detailContent()}
+  {#if showForm}
+    <article class="detail">
+      <h2>Nueva tarea</h2>
+
+      <label class="form-field">
+        <span>Proveedor</span>
+        <select value={formProvider} on:change={onProviderChange}>
+          {#each enabledProviders as p (p.name)}
+            <option value={p.name}>{p.displayName}</option>
+          {/each}
+        </select>
+      </label>
+
+      <label class="form-field">
+        <span>Proyecto{#if formProviderInfo && !showProjectDropdown} — {formProviderInfo.projectHint}{/if}</span>
+        {#if loadingProjects}
+          <p class="hint small">Cargando proyectos…</p>
+        {:else if showProjectDropdown}
+          <select bind:value={formProject}>
+            <option value="" disabled>Elegí un proyecto…</option>
+            {#each projectOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+          <button type="button" class="link-btn" on:click={() => { manualProject = true; formProject = '' }}>
+            Escribir manualmente
+          </button>
+        {:else}
+          {#if projectLoadError}
+            <p class="hint small">No se pudo cargar la lista de proyectos; escribilo manualmente.</p>
+          {/if}
+          <input type="text" bind:value={formProject} placeholder={formProviderInfo?.projectHint ?? ''} />
+          {#if projectOptions.length > 0}
+            <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
+              Elegir de la lista
+            </button>
+          {/if}
+        {/if}
+      </label>
+
+      <label class="form-field">
+        <span>Título</span>
+        <input type="text" bind:value={formTitle} placeholder="¿Qué hay que hacer?" />
+      </label>
+
+      <label class="form-field">
+        <span>Descripción</span>
+        <textarea bind:value={formDescription} rows="6" placeholder="Detalle opcional"></textarea>
+      </label>
+
+      {#if createError}
+        <p class="status error">{createError}</p>
+      {/if}
+
+      <div class="form-actions">
+        <button on:click={closeForm} disabled={creating}>Cancelar</button>
+        <button class="open-external" on:click={submitForm} disabled={creating}>
+          {creating ? 'Creando…' : 'Crear tarea'}
+        </button>
+      </div>
+    </article>
+  {:else if selected}
+    {#key selected.id}
+      <article class="detail">
+        <div class="detail-top">
+          <span class="badge {selected.type}">{typeLabels[selected.type] ?? selected.type}</span>
+          {#if selected.status}<span class="detail-status">{selected.status}</span>{/if}
+          <button
+            class="star-btn"
+            class:active={selected.id in $starredItems}
+            on:click={() => toggleStar(selected!)}
+            title={selected.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill={selected.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+              <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <h2>{selected.title}</h2>
+        <p class="detail-meta">
+          {[selected.project, selected.provider, selected.author].filter(Boolean).join(' · ')}
+        </p>
+
+        {#if selected.description}
+          <pre class="description">{selected.description}</pre>
+        {:else}
+          <p class="hint">Sin descripción.</p>
+        {/if}
+
+        <button class="primary open-external" on:click={() => openExternal(selected!.url)}>
+          Abrir en el navegador
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M7 17 17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </article>
+    {/key}
+  {:else}
+    <div class="detail-empty">
+      <p>Seleccioná una tarea para ver el detalle.</p>
+    </div>
+  {/if}
+{/snippet}
 
 <style>
   .tasks {
@@ -563,6 +671,37 @@
     background: var(--accent-soft);
     border-color: var(--accent);
     color: var(--text);
+  }
+
+  .view-toggle {
+    display: flex;
+    gap: 0.15rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    margin-bottom: 0.4rem;
+  }
+
+  .view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    font-family: inherit;
+  }
+
+  .view-btn:hover {
+    color: var(--text);
+  }
+
+  .view-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
 
   .refresh,
@@ -755,6 +894,97 @@
   }
 
   .detail-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.75rem 2.5rem 2rem;
+  }
+
+  .table-layout {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin: 0 -2.5rem;
+  }
+
+  .table-wrap {
+    flex-shrink: 0;
+    max-height: 45%;
+    overflow-y: auto;
+    padding: 0 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-wrap .list-empty {
+    padding: 1.5rem 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  thead th {
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-faint);
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+  }
+
+  th.th-dot,
+  th.th-star {
+    width: 2rem;
+  }
+
+  tbody tr {
+    cursor: pointer;
+  }
+
+  tbody tr:hover {
+    background: var(--bg-elevated);
+  }
+
+  tbody tr.selected {
+    background: var(--accent-soft);
+  }
+
+  tbody tr.selected .cell-title {
+    color: var(--accent);
+  }
+
+  td {
+    padding: 0.55rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  td .dot {
+    margin-top: 0;
+  }
+
+  td .star-btn {
+    padding: 0;
+  }
+
+  .cell-title {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .cell-muted {
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+
+  .table-detail {
     flex: 1;
     overflow-y: auto;
     padding: 1.75rem 2.5rem 2rem;

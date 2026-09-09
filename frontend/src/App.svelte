@@ -5,12 +5,12 @@
   import { GetTasks } from '../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
   import type { providers } from '../wailsjs/go/models'
-  import { starredIds } from './lib/starred'
+  import { starredItems } from './lib/starred'
 
   let view: 'tasks' | 'watchlist' | 'settings' = 'tasks'
   let taskCount = 0
 
-  $: watchCount = $starredIds.size
+  $: watchCount = Object.keys($starredItems).length
 
   function onUpdated(items: providers.TaskItem[]) {
     taskCount = items?.length ?? 0
