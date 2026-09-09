@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -51,6 +52,16 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// Koalmine's window may be hidden (or never opened) when an update is
+	// applied, so the in-app "Actualizando…" feedback can't be relied on
+	// alone — confirm completion via an OS notification instead, which
+	// works regardless of window state.
+	if v, ok := updater.JustUpdatedTo(os.Args[1:]); ok {
+		if err := notify.Send("Koalmine actualizado", "Ahora estás en la versión "+v+"."); err != nil {
+			log.Printf("no se pudo enviar la notificación de actualización completa: %v", err)
+		}
+	}
+
 	if cached, err := store.LoadCachedTasks(); err != nil {
 		log.Printf("no se pudo cargar el caché de tareas: %v", err)
 	} else {
@@ -89,11 +100,11 @@ func (a *App) watchForUpdates(ctx context.Context) {
 	}
 }
 
-func (a *App) checkForUpdate(ctx context.Context) {
+func (a *App) checkForUpdate(ctx context.Context) (updater.Info, error) {
 	info, err := updater.Check(ctx)
 	if err != nil {
 		log.Printf("updater: %v", err)
-		return
+		return updater.Info{}, err
 	}
 
 	a.updateMu.Lock()
@@ -101,7 +112,7 @@ func (a *App) checkForUpdate(ctx context.Context) {
 	a.updateMu.Unlock()
 
 	if !info.Available {
-		return
+		return info, nil
 	}
 
 	wailsRuntime.EventsEmit(ctx, "update:available", info.Version)
@@ -111,6 +122,17 @@ func (a *App) checkForUpdate(ctx context.Context) {
 	if a.onUpdateAvailable != nil {
 		a.onUpdateAvailable(info)
 	}
+	return info, nil
+}
+
+// CheckForUpdateNow triggers an immediate, out-of-cycle update check and
+// returns its result — used by the "Buscar actualizaciones" button in
+// Settings, so it gets synchronous feedback instead of relying on the
+// background watcher's next tick.
+func (a *App) CheckForUpdateNow() (updater.Info, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return a.checkForUpdate(ctx)
 }
 
 // GetAppVersion returns the running version, e.g. "0.1.0".
@@ -137,10 +159,16 @@ func (a *App) ApplyUpdate() error {
 		return fmt.Errorf("no hay ninguna actualización disponible")
 	}
 
+	// Feedback for the case the Settings window isn't visible to show the
+	// "Actualizando…" button state — the download can take a few seconds.
+	if err := notify.Send("Actualizando Koalmine", "Descargando la versión "+info.Version+"…"); err != nil {
+		log.Printf("no se pudo enviar la notificación de inicio de actualización: %v", err)
+	}
+
 	if err := updater.Apply(a.ctx, info.DownloadURL); err != nil {
 		return err
 	}
-	if err := updater.Relaunch(); err != nil {
+	if err := updater.Relaunch(info.Version); err != nil {
 		return err
 	}
 

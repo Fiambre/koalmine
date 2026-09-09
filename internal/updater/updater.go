@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	update "github.com/inconshreveable/go-update"
@@ -134,12 +135,32 @@ func Apply(ctx context.Context, downloadURL string) error {
 	return nil
 }
 
-// Relaunch starts a new instance of the currently running executable. The
-// caller is responsible for exiting the current process right after.
-func Relaunch() error {
+// UpdatedFlagPrefix marks, as an argv on the relaunched process, the
+// version Relaunch just updated to. Koalmine is a tray app whose window
+// may be hidden (or not open at all) when an update is applied, so the
+// button feedback in Settings can't be relied on alone — the relaunched
+// instance checks JustUpdatedTo on startup and sends an OS notification
+// instead, which works regardless of window state.
+const UpdatedFlagPrefix = "--koalmine-updated-to="
+
+// Relaunch starts a new instance of the currently running executable,
+// marked with newVersion via UpdatedFlagPrefix. The caller is responsible
+// for exiting the current process right after.
+func Relaunch(newVersion string) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	return exec.Command(exePath).Start()
+	return exec.Command(exePath, UpdatedFlagPrefix+newVersion).Start()
+}
+
+// JustUpdatedTo reports the version marked by Relaunch's UpdatedFlagPrefix
+// argv, if present among args (typically os.Args[1:]).
+func JustUpdatedTo(args []string) (string, bool) {
+	for _, arg := range args {
+		if v, ok := strings.CutPrefix(arg, UpdatedFlagPrefix); ok {
+			return v, true
+		}
+	}
+	return "", false
 }

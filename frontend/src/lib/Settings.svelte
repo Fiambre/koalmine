@@ -8,6 +8,7 @@
     SetAutostartEnabled,
     GetAppVersion,
     GetUpdateStatus,
+    CheckForUpdateNow,
     ApplyUpdate,
   } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
@@ -33,6 +34,7 @@
   let appVersion = ''
   let updateInfo: updater.Info | null = null
   let updateStatus: Status = { kind: 'idle' }
+  let checkStatus: Status = { kind: 'idle' }
 
   // Per-provider draft form state, keyed by provider name.
   let drafts: Record<string, Record<string, string>> = {}
@@ -69,6 +71,19 @@
   onDestroy(() => {
     EventsOff('update:available')
   })
+
+  async function checkNow() {
+    checkStatus = { kind: 'testing' }
+    try {
+      const info = await CheckForUpdateNow()
+      updateInfo = info
+      checkStatus = info.available
+        ? { kind: 'ok', message: `Versión ${info.version} disponible.` }
+        : { kind: 'ok', message: 'Ya tenés la última versión.' }
+    } catch (e) {
+      checkStatus = { kind: 'error', message: String(e) }
+    }
+  }
 
   async function applyUpdate() {
     updateStatus = { kind: 'saving' }
@@ -158,7 +173,17 @@
     </article>
 
     <article class="provider-card">
-      <p class="version-line">Versión actual: <strong>{appVersion}</strong></p>
+      <div class="version-row">
+        <p class="version-line">Versión actual: <strong>{appVersion}</strong></p>
+        <button on:click={checkNow} disabled={checkStatus.kind === 'testing'}>
+          {checkStatus.kind === 'testing' ? 'Buscando…' : 'Buscar actualizaciones'}
+        </button>
+      </div>
+      {#if checkStatus.kind === 'error'}
+        <span class="status error">{checkStatus.message}</span>
+      {:else if checkStatus.kind === 'ok' && !updateInfo?.available}
+        <span class="status ok">{checkStatus.message}</span>
+      {/if}
       {#if updateInfo?.available}
         <p class="update-banner">
           Hay una versión nueva disponible: <strong>{updateInfo.version}</strong>
@@ -251,6 +276,13 @@
   .hint.small {
     font-size: 0.8rem;
     margin: 0 0 0.6rem;
+  }
+
+  .version-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
   }
 
   .version-line {

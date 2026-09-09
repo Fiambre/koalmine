@@ -6,6 +6,10 @@ export function ApplyUpdate() {
   return window['go']['main']['App']['ApplyUpdate']();
 }
 
+export function CheckForUpdateNow() {
+  return window['go']['main']['App']['CheckForUpdateNow']();
+}
+
 export function CreateTask(arg1) {
   return window['go']['main']['App']['CreateTask'](arg1);
 }

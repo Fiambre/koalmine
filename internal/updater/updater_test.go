@@ -123,3 +123,22 @@ func TestCheckParsesRealResponseShape(t *testing.T) {
 		t.Errorf("expected an available v9.9.9 update, got %+v", info)
 	}
 }
+
+func TestJustUpdatedTo(t *testing.T) {
+	v, ok := JustUpdatedTo([]string{UpdatedFlagPrefix + "v0.3.0"})
+	if !ok || v != "v0.3.0" {
+		t.Errorf("expected to find the marker version, got %q, %v", v, ok)
+	}
+}
+
+func TestJustUpdatedToAbsent(t *testing.T) {
+	_, ok := JustUpdatedTo([]string{"--some-other-flag"})
+	if ok {
+		t.Error("expected no marker when the flag isn't present")
+	}
+
+	_, ok = JustUpdatedTo(nil)
+	if ok {
+		t.Error("expected no marker for an empty argv")
+	}
+}
