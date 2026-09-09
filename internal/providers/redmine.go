@@ -188,6 +188,54 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 	return items, nil
 }
 
+// FetchComments returns an issue's journal entries that have actual notes
+// text — Redmine's journals also include pure field-change entries (status
+// changed, assignee changed, ...) with empty notes, which aren't comments
+// and are skipped here.
+func (p *redmineProvider) FetchComments(ctx context.Context, cfg Config, item TaskItem) ([]Comment, error) {
+	id := strings.TrimPrefix(item.ID, "redmine:")
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/issues/"+id+".json?include=journals", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		Issue struct {
+			Journals []struct {
+				Notes     string `json:"notes"`
+				CreatedOn string `json:"created_on"`
+				User      struct {
+					Name string `json:"name"`
+				} `json:"user"`
+			} `json:"journals"`
+		} `json:"issue"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	comments := make([]Comment, 0, len(parsed.Issue.Journals))
+	for _, j := range parsed.Issue.Journals {
+		if strings.TrimSpace(j.Notes) == "" {
+			continue
+		}
+		createdAt, _ := time.Parse(time.RFC3339, j.CreatedOn)
+		comments = append(comments, Comment{Author: j.User.Name, Body: j.Notes, CreatedAt: createdAt})
+	}
+	return comments, nil
+}
+
 // CreateItem creates a Redmine issue under the given project identifier,
 // assigned to the authenticated user so it shows up on the next poll.
 func (p *redmineProvider) CreateItem(ctx context.Context, cfg Config, input CreateItemInput) (TaskItem, error) {

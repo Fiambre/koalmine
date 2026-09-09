@@ -138,6 +138,29 @@ func TestGithubSearchItemsEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestGithubFetchComments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/issues/42/comments" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"body": "Un comentario", "created_at": "2026-09-01T10:00:00Z", "user": map[string]any{"login": "rodrigo"}},
+		})
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	item := TaskItem{Project: "acme/repo", URL: "https://github.com/acme/repo/issues/42"}
+	comments, err := p.FetchComments(context.Background(), Config{"token": "secret"}, item)
+	if err != nil {
+		t.Fatalf("FetchComments: %v", err)
+	}
+	if len(comments) != 1 || comments[0].Body != "Un comentario" || comments[0].Author != "rodrigo" {
+		t.Errorf("unexpected comments: %+v", comments)
+	}
+}
+
 func TestGithubCreateItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer secret" {

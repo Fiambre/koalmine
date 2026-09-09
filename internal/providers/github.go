@@ -179,6 +179,50 @@ func (p *githubProvider) ListProjects(ctx context.Context, cfg Config) ([]Projec
 	return options, nil
 }
 
+// FetchComments returns an issue or PR's conversation comments. GitHub
+// serves these through the same /issues/{number}/comments endpoint for
+// both (review comments on specific diff lines are a separate endpoint,
+// not covered here).
+func (p *githubProvider) FetchComments(ctx context.Context, cfg Config, item TaskItem) ([]Comment, error) {
+	number, err := lastURLSegment(item.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%s/comments", item.Project, number), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub respondió %s", resp.Status)
+	}
+
+	var raw []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+		User      struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitHub: %w", err)
+	}
+
+	comments := make([]Comment, 0, len(raw))
+	for _, c := range raw {
+		createdAt, _ := time.Parse(time.RFC3339, c.CreatedAt)
+		comments = append(comments, Comment{Author: c.User.Login, Body: c.Body, CreatedAt: createdAt})
+	}
+	return comments, nil
+}
+
 func (p *githubProvider) rawSearch(ctx context.Context, cfg Config, query string) ([]githubIssue, error) {
 	path := "/search/issues?q=" + url.QueryEscape(query) + "&per_page=50&sort=updated&order=desc"
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)

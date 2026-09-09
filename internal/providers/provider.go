@@ -5,7 +5,9 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -74,6 +76,13 @@ type CreateItemInput struct {
 	Description string
 }
 
+// Comment is one comment/note on a TaskItem.
+type Comment struct {
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // ProjectOption is one entry in the "new task" form's project dropdown:
 // Value is what gets sent back as CreateItemInput.Project, Label is what's
 // shown to the user (the same string for GitHub/GitLab, a friendlier
@@ -114,8 +123,26 @@ type Provider interface {
 	// just the locally cached snapshot), so it can surface older or closed
 	// items that FetchItems' "currently assigned to me" scope wouldn't.
 	SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error)
+	// FetchComments returns the comments/notes on the given item, oldest
+	// first. It takes the whole TaskItem (not just an id) because different
+	// providers need different pieces of it — GitHub needs Project plus the
+	// issue number out of URL, GitLab additionally needs Type to know
+	// whether it's an issue or a merge request, Redmine only needs ID.
+	FetchComments(ctx context.Context, cfg Config, item TaskItem) ([]Comment, error)
 }
 
 func defaultHTTPClient() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
+}
+
+// lastURLSegment returns the final "/"-separated segment of a URL — used to
+// pull a numeric issue/MR id out of a TaskItem's web URL when a provider's
+// comments API needs it but TaskItem doesn't carry it as its own field.
+func lastURLSegment(rawURL string) (string, error) {
+	trimmed := strings.TrimRight(rawURL, "/")
+	idx := strings.LastIndex(trimmed, "/")
+	if idx == -1 || idx == len(trimmed)-1 {
+		return "", fmt.Errorf("URL inválida: %q", rawURL)
+	}
+	return trimmed[idx+1:], nil
 }

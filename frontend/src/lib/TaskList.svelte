@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects } from '../../wailsjs/go/main/App.js'
+  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
   import { starredItems, toggleStar } from './starred'
@@ -76,6 +76,31 @@
     if (months < 12) return `hace ${months} mes${months === 1 ? '' : 'es'}`
     const years = Math.round(months / 12)
     return `hace ${years} año${years === 1 ? '' : 's'}`
+  }
+
+  let comments: providers.Comment[] = []
+  let loadingComments = false
+  let commentsError = ''
+  let commentsLoadedFor: string | null = null
+
+  async function loadComments(item: providers.TaskItem) {
+    commentsLoadedFor = item.id
+    loadingComments = true
+    commentsError = ''
+    comments = []
+    try {
+      comments = (await GetComments(item)) ?? []
+    } catch (e) {
+      commentsError = String(e)
+    } finally {
+      loadingComments = false
+    }
+  }
+
+  // Runs once per newly selected item, regardless of which view (list or
+  // table) triggered the selection.
+  $: if (selected && selected.id !== commentsLoadedFor) {
+    loadComments(selected)
   }
 
   $: enabledProviders = providerList.filter((p) => p.enabled)
@@ -512,6 +537,29 @@
         {:else}
           <p class="hint">Sin descripción.</p>
         {/if}
+
+        <div class="comments">
+          <h3>Comentarios</h3>
+          {#if loadingComments}
+            <p class="hint small">Cargando comentarios…</p>
+          {:else if commentsError}
+            <p class="status error">No se pudieron cargar los comentarios: {commentsError}</p>
+          {:else if comments.length === 0}
+            <p class="hint small">Sin comentarios.</p>
+          {:else}
+            <ul class="comment-list">
+              {#each comments as c, i (i)}
+                <li class="comment">
+                  <div class="comment-head">
+                    <span class="comment-author">{c.author || 'Alguien'}</span>
+                    <span class="comment-date">{relativeTime(c.createdAt)}</span>
+                  </div>
+                  <p class="comment-body">{c.body}</p>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
 
         <button class="primary open-external" on:click={() => openExternal(selected!.url)}>
           Abrir en el navegador
@@ -1043,6 +1091,57 @@
     line-height: 1.55;
     color: var(--text);
     margin: 0 0 1.5rem;
+  }
+
+  .comments {
+    margin: 0 0 1.5rem;
+  }
+
+  .comments h3 {
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin: 0 0 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .comment-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  .comment {
+    border-left: 2px solid var(--border);
+    padding-left: 0.75rem;
+  }
+
+  .comment-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.2rem;
+  }
+
+  .comment-author {
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .comment-date {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+  }
+
+  .comment-body {
+    margin: 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
   }
 
   .form-field {

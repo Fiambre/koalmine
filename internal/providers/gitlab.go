@@ -244,6 +244,59 @@ func (p *gitlabProvider) list(ctx context.Context, cfg Config, path string, item
 	return items, nil
 }
 
+// FetchComments returns an issue or MR's non-system notes — GitLab's notes
+// API also includes auto-generated system notes (label changes, status
+// changes, ...), which aren't comments and are skipped here.
+func (p *gitlabProvider) FetchComments(ctx context.Context, cfg Config, item TaskItem) ([]Comment, error) {
+	iid, err := lastURLSegment(item.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	resource := "issues"
+	if item.Type == ItemTypePR {
+		resource = "merge_requests"
+	}
+
+	path := fmt.Sprintf("/projects/%s/%s/%s/notes", url.PathEscape(item.Project), resource, iid)
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab respondió %s", resp.Status)
+	}
+
+	var raw []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+		System    bool   `json:"system"`
+		Author    struct {
+			Username string `json:"username"`
+		} `json:"author"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+
+	comments := make([]Comment, 0, len(raw))
+	for _, n := range raw {
+		if n.System {
+			continue
+		}
+		createdAt, _ := time.Parse(time.RFC3339, n.CreatedAt)
+		comments = append(comments, Comment{Author: n.Author.Username, Body: n.Body, CreatedAt: createdAt})
+	}
+	return comments, nil
+}
+
 // CreateItem creates a GitLab issue under the given project path/ID,
 // assigned to the authenticated user so it shows up on the next poll.
 func (p *gitlabProvider) CreateItem(ctx context.Context, cfg Config, input CreateItemInput) (TaskItem, error) {

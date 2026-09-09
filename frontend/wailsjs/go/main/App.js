@@ -22,6 +22,10 @@ export function GetAutostartEnabled() {
   return window['go']['main']['App']['GetAutostartEnabled']();
 }
 
+export function GetComments(arg1) {
+  return window['go']['main']['App']['GetComments'](arg1);
+}
+
 export function GetPollIntervalMinutes() {
   return window['go']['main']['App']['GetPollIntervalMinutes']();
 }

@@ -14,6 +14,8 @@ export function GetAppVersion():Promise<string>;
 
 export function GetAutostartEnabled():Promise<boolean>;
 
+export function GetComments(arg1:providers.TaskItem):Promise<Array<providers.Comment>>;
+
 export function GetPollIntervalMinutes():Promise<number>;
 
 export function GetTasks():Promise<Array<providers.TaskItem>>;

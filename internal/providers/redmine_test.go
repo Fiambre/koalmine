@@ -158,6 +158,35 @@ func TestRedmineSearchItemsEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestRedmineFetchComments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/issues/42.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issue": map[string]any{
+				"journals": []map[string]any{
+					{"notes": "", "created_on": "2026-09-01T09:00:00Z", "user": map[string]any{"name": "Sistema"}},
+					{"notes": "Un comentario real", "created_on": "2026-09-01T10:00:00Z", "user": map[string]any{"name": "Rodrigo"}},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	comments, err := p.FetchComments(context.Background(), cfg, TaskItem{ID: "redmine:42"})
+	if err != nil {
+		t.Fatalf("FetchComments: %v", err)
+	}
+	if len(comments) != 1 || comments[0].Body != "Un comentario real" || comments[0].Author != "Rodrigo" {
+		t.Errorf("unexpected comments: %+v", comments)
+	}
+}
+
 func TestRedmineCreateItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -147,6 +147,30 @@ func TestGitlabSearchItemsEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestGitlabFetchComments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/grupo/proyecto/merge_requests/7/notes" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"body": "cambió la etiqueta", "created_at": "2026-09-01T09:00:00Z", "system": true, "author": map[string]any{"username": "bot"}},
+			{"body": "Un comentario real", "created_at": "2026-09-01T10:00:00Z", "system": false, "author": map[string]any{"username": "rodrigo"}},
+		})
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	item := TaskItem{Type: ItemTypePR, Project: "grupo/proyecto", URL: "https://gitlab.com/grupo/proyecto/-/merge_requests/7"}
+	comments, err := p.FetchComments(context.Background(), Config{"token": "secret"}, item)
+	if err != nil {
+		t.Fatalf("FetchComments: %v", err)
+	}
+	if len(comments) != 1 || comments[0].Body != "Un comentario real" || comments[0].Author != "rodrigo" {
+		t.Errorf("unexpected comments: %+v", comments)
+	}
+}
+
 func TestGitlabCreateItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("PRIVATE-TOKEN") != "secret" {

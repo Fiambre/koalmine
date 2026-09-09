@@ -212,6 +212,23 @@ func (a *App) ListProjects(providerName string) ([]providers.ProjectOption, erro
 	return p.ListProjects(ctx, resolved)
 }
 
+// GetComments returns the comments/notes on the given task item.
+func (a *App) GetComments(item providers.TaskItem) ([]providers.Comment, error) {
+	p, ok := providers.Get(item.Provider)
+	if !ok {
+		return nil, fmt.Errorf("proveedor desconocido: %s", item.Provider)
+	}
+
+	resolved, err := store.ResolveConfig(p, item.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return p.FetchComments(ctx, resolved, item)
+}
+
 // CreateTaskInput is what the "new task" form in the frontend submits.
 type CreateTaskInput struct {
 	Provider    string `json:"provider"`
