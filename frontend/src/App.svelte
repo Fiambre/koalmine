@@ -5,9 +5,12 @@
   import { GetTasks } from '../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
   import type { providers } from '../wailsjs/go/models'
+  import { starredIds } from './lib/starred'
 
-  let view: 'tasks' | 'settings' = 'tasks'
+  let view: 'tasks' | 'watchlist' | 'settings' = 'tasks'
   let taskCount = 0
+
+  $: watchCount = $starredIds.size
 
   function onUpdated(items: providers.TaskItem[]) {
     taskCount = items?.length ?? 0
@@ -15,7 +18,7 @@
 
   onMount(async () => {
     EventsOn('navigate', (target: string) => {
-      if (target === 'tasks' || target === 'settings') view = target
+      if (target === 'tasks' || target === 'watchlist' || target === 'settings') view = target
     })
     EventsOn('tasks:updated', onUpdated)
     try {
@@ -46,6 +49,13 @@
         <span>Tareas</span>
         {#if taskCount > 0}<span class="count">{taskCount}</span>{/if}
       </button>
+      <button class:active={view === 'watchlist'} on:click={() => (view = 'watchlist')}>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
+        </svg>
+        <span>Seguimiento</span>
+        {#if watchCount > 0}<span class="count">{watchCount}</span>{/if}
+      </button>
       <button class:active={view === 'settings'} on:click={() => (view = 'settings')}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3" />
@@ -61,6 +71,8 @@
   <section class="content">
     {#if view === 'tasks'}
       <TaskList />
+    {:else if view === 'watchlist'}
+      <TaskList lockToStarred={true} />
     {:else}
       <Settings />
     {/if}

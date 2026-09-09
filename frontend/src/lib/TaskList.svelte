@@ -5,6 +5,8 @@
   import type { providers, main } from '../../wailsjs/go/models'
   import { starredIds, toggleStar } from './starred'
 
+  export let lockToStarred = false
+
   type Filter = 'all' | 'issue' | 'pr' | 'mention'
 
   const typeLabels: Record<string, string> = {
@@ -40,7 +42,7 @@
   let searchTimer: ReturnType<typeof setTimeout> | null = null
 
   let mineOnly = false
-  let starredOnly = false
+  let starredOnly = lockToStarred
 
   $: enabledProviders = providerList.filter((p) => p.enabled)
   $: formProviderInfo = enabledProviders.find((p) => p.name === formProvider) ?? null
@@ -193,12 +195,12 @@
   $: filtered = baseList
     .filter((t) => filter === 'all' || t.type === filter)
     .filter((t) => !mineOnly || t.createdByMe)
-    .filter((t) => !starredOnly || $starredIds.has(t.id))
+    .filter((t) => !(starredOnly || lockToStarred) || $starredIds.has(t.id))
 </script>
 
 <section class="tasks">
   <header>
-    <h1>Todas las tareas</h1>
+    <h1>{lockToStarred ? 'Seguimiento' : 'Todas las tareas'}</h1>
     <div class="search-box">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="7" />
@@ -242,7 +244,9 @@
     </div>
     <div class="tabs-right">
       <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>Creadas por mí</button>
-      <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>★ Favoritos</button>
+      {#if !lockToStarred}
+        <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>★ Favoritos</button>
+      {/if}
     </div>
   </div>
 
@@ -265,7 +269,15 @@
       <ul class="list-pane">
         {#if filtered.length === 0}
           <li class="list-empty">
-            <p>{tasks.length === 0 ? 'Todavía no hay tareas para mostrar.' : 'Nada en este filtro.'}</p>
+            <p>
+              {#if lockToStarred}
+                Todavía no marcaste ninguna tarea. Tocá la ★ en una tarea para agregarla acá.
+              {:else if tasks.length === 0}
+                Todavía no hay tareas para mostrar.
+              {:else}
+                Nada en este filtro.
+              {/if}
+            </p>
           </li>
         {:else}
           {#each filtered as item (item.id)}
