@@ -28,6 +28,13 @@ jobs:
       - name: Install NSIS
         run: choco install nsis -y
 
+      - name: Add NSIS to PATH
+        # choco installs it, but doesn't make later steps in this job see it
+        # on PATH (each step gets a fresh shell) — GITHUB_PATH is the
+        # mechanism for persisting a PATH addition across steps.
+        shell: pwsh
+        run: echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+
       - name: Build app + installer
         run: wails build --nsis
 
