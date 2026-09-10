@@ -158,6 +158,65 @@ func TestRedmineSearchItemsEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestRedmineSearchItemsByTicketNumber(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/issues/42.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issue": map[string]any{
+				"id":         42,
+				"subject":    "Arreglar el build",
+				"updated_on": "2026-09-01T10:00:00Z",
+			},
+		})
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	for _, query := range []string{"42", "#42"} {
+		items, err := p.SearchItems(context.Background(), cfg, query)
+		if err != nil {
+			t.Fatalf("SearchItems(%q): %v", query, err)
+		}
+		if len(items) != 1 || items[0].ID != "redmine:42" || items[0].Title != "Arreglar el build" {
+			t.Errorf("SearchItems(%q): unexpected items: %+v", query, items)
+		}
+	}
+}
+
+func TestRedmineSearchItemsByTicketNumberFallsBackWhenNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/issues/999.json":
+			w.WriteHeader(http.StatusNotFound)
+		case "/search.json":
+			if r.URL.Query().Get("q") != "999" {
+				t.Errorf("unexpected query: %s", r.URL.Query().Get("q"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{}})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	items, err := p.SearchItems(context.Background(), cfg, "999")
+	if err != nil {
+		t.Fatalf("SearchItems: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected no items, got %+v", items)
+	}
+}
+
 func TestRedmineFetchComments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/issues/42.json" {

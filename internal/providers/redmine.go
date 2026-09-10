@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -139,6 +140,21 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 		return nil, nil
 	}
 
+	// Redmine's full-text search indexes issue subjects/descriptions, not
+	// issue numbers — searching for a bare ticket number like "12345"
+	// (optionally "#12345") returns nothing unless that digit string also
+	// happens to appear as text. Fetch the issue directly by ID first for
+	// that case rather than relying on /search.json to find it.
+	if id, ok := parseRedmineIssueID(query); ok {
+		item, found, err := p.fetchIssueByID(ctx, cfg, id)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return []TaskItem{item}, nil
+		}
+	}
+
 	path := "/search.json?q=" + url.QueryEscape(query) + "&issues=1&limit=25"
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
 	if err != nil {
@@ -186,6 +202,55 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 		})
 	}
 	return items, nil
+}
+
+// parseRedmineIssueID recognizes a query that's just a ticket number,
+// optionally prefixed with "#" (how users typically write a Redmine
+// reference, e.g. "#12345").
+func parseRedmineIssueID(query string) (int, bool) {
+	digits := strings.TrimPrefix(query, "#")
+	if digits == "" {
+		return 0, false
+	}
+	id, err := strconv.Atoi(digits)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+// fetchIssueByID looks up a single issue directly. found is false (with a
+// nil error) when Redmine returns 404 — an ID that doesn't exist, or one
+// outside the API key's access — so the caller can fall back to a regular
+// text search instead of treating it as a hard failure.
+func (p *redmineProvider) fetchIssueByID(ctx context.Context, cfg Config, id int) (TaskItem, bool, error) {
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, fmt.Sprintf("/issues/%d.json", id), nil)
+	if err != nil {
+		return TaskItem{}, false, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return TaskItem{}, false, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return TaskItem{}, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return TaskItem{}, false, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		Issue redmineIssue `json:"issue"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return TaskItem{}, false, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	baseURL := strings.TrimRight(cfg["base_url"], "/")
+	return redmineToTaskItem(parsed.Issue, baseURL), true, nil
 }
 
 // FetchComments returns an issue's journal entries that have actual notes
