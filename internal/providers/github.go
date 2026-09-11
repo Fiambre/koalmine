@@ -223,6 +223,47 @@ func (p *githubProvider) FetchComments(ctx context.Context, cfg Config, item Tas
 	return comments, nil
 }
 
+// FetchItem re-fetches a single issue or PR's current data — see
+// Provider.FetchItem. Type is kept from the passed-in item rather than
+// re-derived (beyond upgrading issue→pr if the API says so): GitHub itself
+// has no "mention" concept, so a starred mention would otherwise silently
+// flip to a plain issue on refresh.
+func (p *githubProvider) FetchItem(ctx context.Context, cfg Config, item TaskItem) (TaskItem, error) {
+	number, err := lastURLSegment(item.URL)
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%s", item.Project, number), nil)
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return TaskItem{}, fmt.Errorf("no se pudo conectar a GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return TaskItem{}, fmt.Errorf("GitHub respondió %s", resp.Status)
+	}
+
+	var issue githubIssue
+	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
+		return TaskItem{}, fmt.Errorf("respuesta inválida de GitHub: %w", err)
+	}
+
+	itemType := item.Type
+	if issue.PullRequest != nil {
+		itemType = ItemTypePR
+	}
+	fresh := githubToTaskItem(issue, itemType)
+	login, _ := p.currentLogin(ctx, cfg)
+	fresh.CreatedByMe = login != "" && fresh.Author == login
+	return fresh, nil
+}
+
 func (p *githubProvider) rawSearch(ctx context.Context, cfg Config, query string) ([]githubIssue, error) {
 	path := "/search/issues?q=" + url.QueryEscape(query) + "&per_page=50&sort=updated&order=desc"
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)

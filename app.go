@@ -229,6 +229,27 @@ func (a *App) GetComments(item providers.TaskItem) ([]providers.Comment, error) 
 	return p.FetchComments(ctx, resolved, item)
 }
 
+// RefreshTaskItem re-fetches one item's current data from its provider —
+// used to heal a starred ("Seguimiento") item whose locally-saved snapshot
+// is stale or was incomplete to begin with, since starred items otherwise
+// only get refreshed when they happen to still be in scope for the regular
+// poll (see providers.Provider.FetchItem).
+func (a *App) RefreshTaskItem(item providers.TaskItem) (providers.TaskItem, error) {
+	p, ok := providers.Get(item.Provider)
+	if !ok {
+		return providers.TaskItem{}, fmt.Errorf("proveedor desconocido: %s", item.Provider)
+	}
+
+	resolved, err := store.ResolveConfig(p, item.Provider)
+	if err != nil {
+		return providers.TaskItem{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return p.FetchItem(ctx, resolved, item)
+}
+
 // CreateTaskInput is what the "new task" form in the frontend submits.
 type CreateTaskInput struct {
 	Provider    string `json:"provider"`

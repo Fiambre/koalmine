@@ -244,6 +244,47 @@ func (p *gitlabProvider) list(ctx context.Context, cfg Config, path string, item
 	return items, nil
 }
 
+// FetchItem re-fetches a single issue or MR's current data — see
+// Provider.FetchItem.
+func (p *gitlabProvider) FetchItem(ctx context.Context, cfg Config, item TaskItem) (TaskItem, error) {
+	iid, err := lastURLSegment(item.URL)
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	resource := "issues"
+	if item.Type == ItemTypePR {
+		resource = "merge_requests"
+	}
+
+	path := fmt.Sprintf("/projects/%s/%s/%s", url.PathEscape(item.Project), resource, iid)
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return TaskItem{}, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return TaskItem{}, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return TaskItem{}, fmt.Errorf("GitLab respondió %s", resp.Status)
+	}
+
+	var it gitlabItem
+	if err := json.NewDecoder(resp.Body).Decode(&it); err != nil {
+		return TaskItem{}, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+
+	fresh := gitlabToTaskItem(it, item.Type)
+	if me, err := p.currentUser(ctx, cfg); err == nil {
+		fresh.CreatedByMe = fresh.Author == me.Username
+	}
+	return fresh, nil
+}
+
 // FetchComments returns an issue or MR's non-system notes — GitLab's notes
 // API also includes auto-generated system notes (label changes, status
 // changes, ...), which aren't comments and are skipped here.

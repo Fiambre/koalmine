@@ -171,6 +171,31 @@ func TestGitlabFetchComments(t *testing.T) {
 	}
 }
 
+func TestGitlabFetchItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/projects/grupo/proyecto/merge_requests/7":
+			_ = json.NewEncoder(w).Encode(gitlabItemFixture(1, "Arreglar el build", "grupo/proyecto!7"))
+		case "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "username": "rodrigo"})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	item := TaskItem{Type: ItemTypePR, Project: "grupo/proyecto", URL: "https://gitlab.com/grupo/proyecto/-/merge_requests/7"}
+	fresh, err := p.FetchItem(context.Background(), Config{"token": "secret"}, item)
+	if err != nil {
+		t.Fatalf("FetchItem: %v", err)
+	}
+	if fresh.Title != "Arreglar el build" || fresh.Project != "grupo/proyecto" || !fresh.CreatedByMe {
+		t.Errorf("unexpected item: %+v", fresh)
+	}
+}
+
 func TestGitlabCreateItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("PRIVATE-TOKEN") != "secret" {

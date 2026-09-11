@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments } from '../../wailsjs/go/main/App.js'
+  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
-  import { starredItems, toggleStar } from './starred'
+  import { starredItems, toggleStar, updateStarredItem } from './starred'
 
   export let lockToStarred = false
 
@@ -130,15 +130,34 @@
     } catch {
       // The "new task" form just won't have any provider to offer.
     }
+    if (lockToStarred) refreshStarred()
   })
 
   onDestroy(() => {
     EventsOff('tasks:updated')
   })
 
+  // Starred items outside the regular "assigned to me" poll scope (e.g.
+  // created by the user but assigned elsewhere) never get updated by it, and
+  // may have been saved with an incomplete snapshot to begin with — see
+  // RefreshTaskItem. Fetched individually and best-effort: one item failing
+  // (deleted, access revoked, offline) shouldn't block the rest.
+  async function refreshStarred() {
+    await Promise.allSettled(
+      Object.values($starredItems).map(async (item) => {
+        try {
+          updateStarredItem(await RefreshTaskItem(item))
+        } catch {
+          // Keep the existing snapshot rather than surface a per-item error.
+        }
+      }),
+    )
+  }
+
   async function refresh() {
     refreshing = true
     loadError = ''
+    if (lockToStarred) refreshStarred()
     try {
       await RefreshNow()
     } catch (e) {

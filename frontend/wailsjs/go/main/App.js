@@ -54,6 +54,10 @@ export function RefreshNow() {
   return window['go']['main']['App']['RefreshNow']();
 }
 
+export function RefreshTaskItem(arg1) {
+  return window['go']['main']['App']['RefreshTaskItem'](arg1);
+}
+
 export function SaveProviderConfig(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveProviderConfig'](arg1, arg2, arg3);
 }

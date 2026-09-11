@@ -320,6 +320,24 @@ func (p *redmineProvider) fetchIssuesByIDs(ctx context.Context, cfg Config, ids 
 	return byID, nil
 }
 
+// FetchItem re-fetches a single issue by ID — see Provider.FetchItem.
+func (p *redmineProvider) FetchItem(ctx context.Context, cfg Config, item TaskItem) (TaskItem, error) {
+	idStr := strings.TrimPrefix(item.ID, "redmine:")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return TaskItem{}, fmt.Errorf("id de tarea inválido: %q", item.ID)
+	}
+
+	fresh, found, err := p.fetchIssueByID(ctx, cfg, id)
+	if err != nil {
+		return TaskItem{}, err
+	}
+	if !found {
+		return TaskItem{}, fmt.Errorf("el ticket #%d ya no existe o no es accesible con esta API key", id)
+	}
+	return fresh, nil
+}
+
 // FetchComments returns an issue's journal entries that have actual notes
 // text — Redmine's journals also include pure field-change entries (status
 // changed, assignee changed, ...) with empty notes, which aren't comments

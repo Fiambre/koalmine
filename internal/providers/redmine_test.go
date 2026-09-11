@@ -247,6 +247,49 @@ func TestRedmineSearchItemsByTicketNumberFallsBackWhenNotFound(t *testing.T) {
 	}
 }
 
+func TestRedmineFetchItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/issues/42.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issue": map[string]any{
+				"id":         42,
+				"subject":    "Arreglar el build",
+				"updated_on": "2026-09-01T10:00:00Z",
+				"project":    map[string]any{"name": "Koalmine"},
+				"status":     map[string]any{"name": "En curso"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	item := TaskItem{ID: "redmine:42"}
+	fresh, err := p.FetchItem(context.Background(), Config{"base_url": server.URL, "api_key": "secret"}, item)
+	if err != nil {
+		t.Fatalf("FetchItem: %v", err)
+	}
+	if fresh.Project != "Koalmine" || fresh.Status != "En curso" {
+		t.Errorf("unexpected item: %+v", fresh)
+	}
+}
+
+func TestRedmineFetchItemNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	item := TaskItem{ID: "redmine:999"}
+	_, err := p.FetchItem(context.Background(), Config{"base_url": server.URL, "api_key": "secret"}, item)
+	if err == nil {
+		t.Fatal("expected an error for a ticket that no longer exists")
+	}
+}
+
 func TestRedmineFetchComments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/issues/42.json" {

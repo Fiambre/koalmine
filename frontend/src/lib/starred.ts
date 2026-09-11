@@ -45,3 +45,16 @@ export function toggleStar(item: providers.TaskItem) {
     return next
   })
 }
+
+// Replaces a starred item's saved snapshot with fresher data (e.g. from
+// RefreshTaskItem), without starring/unstarring it. A no-op if the item
+// isn't currently starred, so a refresh that resolves after the user
+// unstarred it doesn't resurrect the entry.
+export function updateStarredItem(item: providers.TaskItem) {
+  starredItems.update((items) => {
+    if (!(item.id in items)) return items
+    const next = { ...items, [item.id]: item }
+    save(next)
+    return next
+  })
+}

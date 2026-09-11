@@ -30,6 +30,8 @@ export function OpenURL(arg1:string):Promise<void>;
 
 export function RefreshNow():Promise<void>;
 
+export function RefreshTaskItem(arg1:providers.TaskItem):Promise<providers.TaskItem>;
+
 export function SaveProviderConfig(arg1:string,arg2:boolean,arg3:Record<string, string>):Promise<void>;
 
 export function SearchTasks(arg1:string):Promise<Array<providers.TaskItem>>;

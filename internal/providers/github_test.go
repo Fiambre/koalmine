@@ -161,6 +161,36 @@ func TestGithubFetchComments(t *testing.T) {
 	}
 }
 
+func TestGithubFetchItem(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/repo/issues/42":
+			_ = json.NewEncoder(w).Encode(issueFixture(42, "Arreglar el build", false))
+		case "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "rodrigo"})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	item := TaskItem{ID: "github:42", Type: ItemTypeMention, Project: "acme/repo", URL: "https://github.com/acme/repo/issues/42"}
+	fresh, err := p.FetchItem(context.Background(), Config{"token": "secret"}, item)
+	if err != nil {
+		t.Fatalf("FetchItem: %v", err)
+	}
+	if fresh.Title != "Arreglar el build" {
+		t.Errorf("unexpected item: %+v", fresh)
+	}
+	// A non-PR issue keeps whatever type the caller passed in (GitHub has no
+	// "mention" concept of its own to re-derive from the API response).
+	if fresh.Type != ItemTypeMention {
+		t.Errorf("expected type to stay %q, got %q", ItemTypeMention, fresh.Type)
+	}
+}
+
 func TestGithubCreateItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer secret" {

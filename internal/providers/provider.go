@@ -129,6 +129,14 @@ type Provider interface {
 	// issue number out of URL, GitLab additionally needs Type to know
 	// whether it's an issue or a merge request, Redmine only needs ID.
 	FetchComments(ctx context.Context, cfg Config, item TaskItem) ([]Comment, error)
+	// FetchItem re-fetches one item's current data. It exists for starred
+	// ("Seguimiento") items specifically: a star can outlive FetchItems'
+	// scope (an issue reassigned away from the user, a merged PR, ...), so
+	// the regular poll stops refreshing it, and the snapshot taken at
+	// star-time may itself have been incomplete (e.g. Redmine's SearchItems
+	// can't return project/status directly). Same "whole item, not just an
+	// id" reasoning as FetchComments.
+	FetchItem(ctx context.Context, cfg Config, item TaskItem) (TaskItem, error)
 }
 
 func defaultHTTPClient() *http.Client {
