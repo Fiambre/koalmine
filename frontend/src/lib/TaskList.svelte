@@ -3,7 +3,7 @@
   import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
-  import { starredItems, toggleStar, updateStarredItem } from './starred'
+  import { starredItems, toggleStar, updateStarredItem, markRefreshed, needsRefresh } from './starred'
 
   export let lockToStarred = false
 
@@ -140,24 +140,37 @@
   // Starred items outside the regular "assigned to me" poll scope (e.g.
   // created by the user but assigned elsewhere) never get updated by it, and
   // may have been saved with an incomplete snapshot to begin with — see
-  // RefreshTaskItem. Fetched individually and best-effort: one item failing
-  // (deleted, access revoked, offline) shouldn't block the rest.
-  async function refreshStarred() {
-    await Promise.allSettled(
-      Object.values($starredItems).map(async (item) => {
-        try {
-          updateStarredItem(await RefreshTaskItem(item))
-        } catch {
-          // Keep the existing snapshot rather than surface a per-item error.
-        }
-      }),
-    )
+  // RefreshTaskItem. Two things keep this from turning into a stampede of
+  // requests as the favorites list grows: a capped batch size (never more
+  // than REFRESH_CONCURRENCY in flight at once) and, unless forced, skipping
+  // anything refreshed recently — so switching back to this tab repeatedly
+  // doesn't re-fetch everything every time. Best-effort per item either way:
+  // one failing (deleted, access revoked, offline) doesn't block the rest.
+  const REFRESH_CONCURRENCY = 4
+  const AUTO_REFRESH_MAX_AGE_MS = 5 * 60 * 1000
+
+  async function refreshStarred(force = false) {
+    const pending = Object.values($starredItems).filter((item) => force || needsRefresh(item.id, AUTO_REFRESH_MAX_AGE_MS))
+    for (let i = 0; i < pending.length; i += REFRESH_CONCURRENCY) {
+      const batch = pending.slice(i, i + REFRESH_CONCURRENCY)
+      await Promise.allSettled(
+        batch.map(async (item) => {
+          try {
+            updateStarredItem(await RefreshTaskItem(item))
+          } catch {
+            // Keep the existing snapshot rather than surface a per-item error.
+          } finally {
+            markRefreshed(item.id)
+          }
+        }),
+      )
+    }
   }
 
   async function refresh() {
     refreshing = true
     loadError = ''
-    if (lockToStarred) refreshStarred()
+    if (lockToStarred) refreshStarred(true)
     try {
       await RefreshNow()
     } catch (e) {

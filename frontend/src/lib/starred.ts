@@ -58,3 +58,22 @@ export function updateStarredItem(item: providers.TaskItem) {
     return next
   })
 }
+
+// In-memory only (resets on app restart), module-scoped so it survives
+// Seguimiento's TaskList instance being torn down and recreated each time
+// the sidebar tab is switched. Without this, a growing favorites list would
+// re-fetch every single one from its provider on every tab open — see
+// needsRefresh.
+const lastRefreshedAt = new Map<string, number>()
+
+export function markRefreshed(id: string) {
+  lastRefreshedAt.set(id, Date.now())
+}
+
+// Whether a starred item's provider data hasn't been re-fetched recently
+// enough to trust it as "current" — used to skip re-fetching items that
+// were just refreshed a moment ago (e.g. switching tabs back and forth).
+export function needsRefresh(id: string, maxAgeMs: number): boolean {
+  const last = lastRefreshedAt.get(id)
+  return last === undefined || Date.now() - last > maxAgeMs
+}
