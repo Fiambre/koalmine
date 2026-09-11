@@ -4,4 +4,4 @@
 // installer's metadata) when cutting a release. See RELEASING.md.
 package version
 
-const Current = "0.7.1"
+const Current = "0.7.2"

@@ -132,8 +132,11 @@ func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]Proje
 
 // SearchItems runs a full-text search across every issue the user has
 // access to (not just ones assigned to them), via Redmine's own search
-// endpoint. Redmine's search results don't include author info, so
-// CreatedByMe can't be computed here — it stays false, unlike FetchItems.
+// endpoint. Redmine's search results carry only id/title/url/description —
+// no project, status or author — so those get backfilled below with one
+// bulk issue lookup (matching what FetchItems returns), rather than left
+// blank the way they'd otherwise show up in the UI (e.g. the "Seguimiento"
+// table's Proyecto/Estado columns).
 func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query string) ([]TaskItem, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -185,9 +188,32 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
+	var issueIDs []int
+	for _, r := range parsed.Results {
+		if r.Type == "issue" {
+			issueIDs = append(issueIDs, r.ID)
+		}
+	}
+	// Best-effort: if the backfill fails, results still come back with
+	// their bare search fields rather than failing the whole search over
+	// an enrichment step.
+	var full map[int]redmineIssue
+	var userID int
+	if len(issueIDs) > 0 {
+		full, _ = p.fetchIssuesByIDs(ctx, cfg, issueIDs)
+		userID, _ = p.currentUserID(ctx, cfg)
+	}
+
+	baseURL := strings.TrimRight(cfg["base_url"], "/")
 	items := make([]TaskItem, 0, len(parsed.Results))
 	for _, r := range parsed.Results {
 		if r.Type != "issue" {
+			continue
+		}
+		if issue, ok := full[r.ID]; ok {
+			item := redmineToTaskItem(issue, baseURL)
+			item.CreatedByMe = userID != 0 && issue.Author.ID == userID
+			items = append(items, item)
 			continue
 		}
 		updatedAt, _ := time.Parse(time.RFC3339, r.Datetime)
@@ -251,6 +277,47 @@ func (p *redmineProvider) fetchIssueByID(ctx context.Context, cfg Config, id int
 
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
 	return redmineToTaskItem(parsed.Issue, baseURL), true, nil
+}
+
+// fetchIssuesByIDs fetches full issue data for a batch of IDs in one
+// request, keyed by ID. status_id=* is required because /issues.json only
+// returns open issues by default, and a matched issue may be closed.
+func (p *redmineProvider) fetchIssuesByIDs(ctx context.Context, cfg Config, ids []int) (map[int]redmineIssue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	strIDs := make([]string, len(ids))
+	for i, id := range ids {
+		strIDs[i] = strconv.Itoa(id)
+	}
+	path := fmt.Sprintf("/issues.json?issue_id=%s&status_id=*&limit=%d", strings.Join(strIDs, ","), len(ids))
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed redmineIssuesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	byID := make(map[int]redmineIssue, len(parsed.Issues))
+	for _, issue := range parsed.Issues {
+		byID[issue.ID] = issue
+	}
+	return byID, nil
 }
 
 // FetchComments returns an issue's journal entries that have actual notes

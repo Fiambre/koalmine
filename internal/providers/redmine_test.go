@@ -104,31 +104,54 @@ func TestRedmineListProjects(t *testing.T) {
 
 func TestRedmineSearchItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/search.json" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/search.json":
+			if r.URL.Query().Get("q") != "build" {
+				t.Errorf("unexpected query: %s", r.URL.Query().Get("q"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{
+						"id":          42,
+						"title":       "Arreglar el build",
+						"type":        "issue",
+						"url":         "https://redmine.example.com/issues/42",
+						"description": "El build falla en CI.",
+						"datetime":    "2026-09-01T10:00:00Z",
+					},
+					{
+						"id":    7,
+						"title": "Un proyecto que contiene 'build' en el nombre",
+						"type":  "project",
+						"url":   "https://redmine.example.com/projects/7",
+					},
+				},
+			})
+		case "/issues.json":
+			// The backfill lookup: only the issue-type result (42) should
+			// be requested, never the project-type one (7).
+			if got := r.URL.Query().Get("issue_id"); got != "42" {
+				t.Errorf("unexpected issue_id filter: %s", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{
+					{
+						"id":          42,
+						"subject":     "Arreglar el build",
+						"description": "El build falla en CI.",
+						"updated_on":  "2026-09-01T10:00:00Z",
+						"project":     map[string]any{"name": "Koalmine"},
+						"status":      map[string]any{"name": "En curso"},
+						"author":      map[string]any{"id": 9, "name": "Otra Persona"},
+					},
+				},
+			})
+		case "/users/current.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": 5}})
+		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("q") != "build" {
-			t.Errorf("unexpected query: %s", r.URL.Query().Get("q"))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"results": []map[string]any{
-				{
-					"id":          42,
-					"title":       "Arreglar el build",
-					"type":        "issue",
-					"url":         "https://redmine.example.com/issues/42",
-					"description": "El build falla en CI.",
-					"datetime":    "2026-09-01T10:00:00Z",
-				},
-				{
-					"id":    7,
-					"title": "Un proyecto que contiene 'build' en el nombre",
-					"type":  "project",
-					"url":   "https://redmine.example.com/projects/7",
-				},
-			},
-		})
 	}))
 	defer server.Close()
 
@@ -142,8 +165,15 @@ func TestRedmineSearchItems(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected non-issue results to be filtered out, got %d: %+v", len(items), items)
 	}
-	if items[0].ID != "redmine:42" || items[0].Title != "Arreglar el build" {
-		t.Errorf("unexpected item: %+v", items[0])
+	item := items[0]
+	if item.ID != "redmine:42" || item.Title != "Arreglar el build" {
+		t.Errorf("unexpected item: %+v", item)
+	}
+	if item.Project != "Koalmine" || item.Status != "En curso" {
+		t.Errorf("expected project/status backfilled from the bulk issue lookup, got: %+v", item)
+	}
+	if item.CreatedByMe {
+		t.Errorf("expected CreatedByMe false for an issue authored by someone else, got true")
 	}
 }
 
