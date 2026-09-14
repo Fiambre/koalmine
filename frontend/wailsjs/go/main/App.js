@@ -10,8 +10,16 @@ export function CheckForUpdateNow() {
   return window['go']['main']['App']['CheckForUpdateNow']();
 }
 
+export function CreateIntegration(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateIntegration'](arg1, arg2, arg3);
+}
+
 export function CreateTask(arg1) {
   return window['go']['main']['App']['CreateTask'](arg1);
+}
+
+export function DeleteIntegration(arg1) {
+  return window['go']['main']['App']['DeleteIntegration'](arg1);
 }
 
 export function GetAppVersion() {
@@ -38,12 +46,16 @@ export function GetUpdateStatus() {
   return window['go']['main']['App']['GetUpdateStatus']();
 }
 
+export function ListIntegrations() {
+  return window['go']['main']['App']['ListIntegrations']();
+}
+
 export function ListProjects(arg1) {
   return window['go']['main']['App']['ListProjects'](arg1);
 }
 
-export function ListProviders() {
-  return window['go']['main']['App']['ListProviders']();
+export function ListProviderTypes() {
+  return window['go']['main']['App']['ListProviderTypes']();
 }
 
 export function OpenURL(arg1) {
@@ -58,10 +70,6 @@ export function RefreshTaskItem(arg1) {
   return window['go']['main']['App']['RefreshTaskItem'](arg1);
 }
 
-export function SaveProviderConfig(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SaveProviderConfig'](arg1, arg2, arg3);
-}
-
 export function SearchTasks(arg1) {
   return window['go']['main']['App']['SearchTasks'](arg1);
 }
@@ -74,6 +82,10 @@ export function SetPollIntervalMinutes(arg1) {
   return window['go']['main']['App']['SetPollIntervalMinutes'](arg1);
 }
 
-export function TestConnection(arg1, arg2) {
-  return window['go']['main']['App']['TestConnection'](arg1, arg2);
+export function TestConnection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestConnection'](arg1, arg2, arg3);
+}
+
+export function UpdateIntegration(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateIntegration'](arg1, arg2, arg3, arg4);
 }

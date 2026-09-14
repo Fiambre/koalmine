@@ -194,39 +194,69 @@ func (a *App) OpenURL(url string) {
 	wailsRuntime.BrowserOpenURL(a.ctx, url)
 }
 
-// ListProjects returns the projects/repos the given provider's authenticated
-// user can create a task in, for the "new task" form's project dropdown.
-func (a *App) ListProjects(providerName string) ([]providers.ProjectOption, error) {
-	p, ok := providers.Get(providerName)
-	if !ok {
-		return nil, fmt.Errorf("proveedor desconocido: %s", providerName)
-	}
+// resolvedIntegration bundles what every method below needs: the
+// integration itself (for its Name/Type/ID), the live Provider instance
+// for its Type, and its fully-resolved Config.
+type resolvedIntegration struct {
+	integration   store.Integration
+	provider      providers.Provider
+	config        providers.Config
+	sameTypeCount int
+}
 
-	resolved, err := store.ResolveConfig(p, providerName)
+// resolveIntegration loads the current config and looks up integrationID,
+// returning everything needed to call into its provider. Used by every
+// method that acts on one specific configured connection.
+func (a *App) resolveIntegration(integrationID string) (resolvedIntegration, error) {
+	cfg, err := store.Load()
+	if err != nil {
+		return resolvedIntegration{}, err
+	}
+	integ, ok := cfg.IntegrationByID(integrationID)
+	if !ok {
+		return resolvedIntegration{}, fmt.Errorf("integración desconocida: %s", integrationID)
+	}
+	p, ok := providers.Get(integ.Type)
+	if !ok {
+		return resolvedIntegration{}, fmt.Errorf("tipo de proveedor desconocido: %s", integ.Type)
+	}
+	resolved, err := store.ResolveConfig(p, integ.ID)
+	if err != nil {
+		return resolvedIntegration{}, err
+	}
+	return resolvedIntegration{
+		integration:   integ,
+		provider:      p,
+		config:        resolved,
+		sameTypeCount: cfg.SameTypeCount(integ.Type),
+	}, nil
+}
+
+// ListProjects returns the projects/repos the given integration's
+// authenticated user can create a task in, for the "new task" form's
+// project dropdown.
+func (a *App) ListProjects(integrationID string) ([]providers.ProjectOption, error) {
+	ri, err := a.resolveIntegration(integrationID)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
-	return p.ListProjects(ctx, resolved)
+	return ri.provider.ListProjects(ctx, ri.config)
 }
 
 // GetComments returns the comments/notes on the given task item.
 func (a *App) GetComments(item providers.TaskItem) ([]providers.Comment, error) {
-	p, ok := providers.Get(item.Provider)
-	if !ok {
-		return nil, fmt.Errorf("proveedor desconocido: %s", item.Provider)
-	}
-
-	resolved, err := store.ResolveConfig(p, item.Provider)
+	ri, err := a.resolveIntegration(store.IntegrationIDFor(item))
 	if err != nil {
 		return nil, err
 	}
+	item.ID = store.DenamespaceID(item.ID, ri.integration.ID)
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
-	return p.FetchComments(ctx, resolved, item)
+	return ri.provider.FetchComments(ctx, ri.config, item)
 }
 
 // RefreshTaskItem re-fetches one item's current data from its provider —
@@ -235,40 +265,35 @@ func (a *App) GetComments(item providers.TaskItem) ([]providers.Comment, error) 
 // only get refreshed when they happen to still be in scope for the regular
 // poll (see providers.Provider.FetchItem).
 func (a *App) RefreshTaskItem(item providers.TaskItem) (providers.TaskItem, error) {
-	p, ok := providers.Get(item.Provider)
-	if !ok {
-		return providers.TaskItem{}, fmt.Errorf("proveedor desconocido: %s", item.Provider)
-	}
-
-	resolved, err := store.ResolveConfig(p, item.Provider)
+	ri, err := a.resolveIntegration(store.IntegrationIDFor(item))
 	if err != nil {
 		return providers.TaskItem{}, err
 	}
+	item.ID = store.DenamespaceID(item.ID, ri.integration.ID)
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
-	return p.FetchItem(ctx, resolved, item)
+	fresh, err := ri.provider.FetchItem(ctx, ri.config, item)
+	if err != nil {
+		return providers.TaskItem{}, err
+	}
+	return store.NamespaceItem(fresh, ri.integration, ri.sameTypeCount), nil
 }
 
 // CreateTaskInput is what the "new task" form in the frontend submits.
 type CreateTaskInput struct {
-	Provider    string `json:"provider"`
+	Integration string `json:"integration"`
 	Project     string `json:"project"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
 
-// CreateTask creates a new issue on the given provider, assigned to the
+// CreateTask creates a new issue on the given integration, assigned to the
 // authenticated user. It's merged into the current in-memory snapshot and
 // broadcast immediately, rather than waiting for the next poll cycle, so it
 // shows up in the list right away.
 func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
-	p, ok := providers.Get(input.Provider)
-	if !ok {
-		return providers.TaskItem{}, fmt.Errorf("proveedor desconocido: %s", input.Provider)
-	}
-
-	resolved, err := store.ResolveConfig(p, input.Provider)
+	ri, err := a.resolveIntegration(input.Integration)
 	if err != nil {
 		return providers.TaskItem{}, err
 	}
@@ -276,7 +301,7 @@ func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
 	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
 	defer cancel()
 
-	item, err := p.CreateItem(ctx, resolved, providers.CreateItemInput{
+	item, err := ri.provider.CreateItem(ctx, ri.config, providers.CreateItemInput{
 		Project:     input.Project,
 		Title:       input.Title,
 		Description: input.Description,
@@ -284,6 +309,7 @@ func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
 	if err != nil {
 		return providers.TaskItem{}, err
 	}
+	item = store.NamespaceItem(item, ri.integration, ri.sameTypeCount)
 
 	a.tasksMu.Lock()
 	a.tasks = append([]providers.TaskItem{item}, a.tasks...)
@@ -298,11 +324,11 @@ func (a *App) CreateTask(input CreateTaskInput) (providers.TaskItem, error) {
 	return item, nil
 }
 
-// SearchTasks runs a free-text search against every enabled provider (not
-// just the cached snapshot), merging and sorting the results the same way
-// the poller does. Errors from individual providers are logged and skipped
-// rather than failing the whole search, so one misbehaving provider doesn't
-// block results from the others.
+// SearchTasks runs a free-text search against every enabled integration
+// (not just the cached snapshot), merging and sorting the results the same
+// way the poller does. Errors from individual integrations are logged and
+// skipped rather than failing the whole search, so one misbehaving
+// connection doesn't block results from the others.
 func (a *App) SearchTasks(query string) ([]providers.TaskItem, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -315,103 +341,230 @@ func (a *App) SearchTasks(query string) ([]providers.TaskItem, error) {
 	}
 
 	var all []providers.TaskItem
-	for _, p := range providers.List() {
-		pc, ok := cfg.Providers[p.Name()]
-		if !ok || !pc.Enabled {
+	for _, integ := range cfg.Integrations {
+		if !integ.Enabled {
 			continue
 		}
 
-		resolved, err := store.ResolveConfig(p, p.Name())
+		p, ok := providers.Get(integ.Type)
+		if !ok {
+			log.Printf("search: %s: tipo de proveedor desconocido: %s", integ.Name, integ.Type)
+			continue
+		}
+
+		resolved, err := store.ResolveConfig(p, integ.ID)
 		if err != nil {
-			log.Printf("search: %s: %v", p.Name(), err)
+			log.Printf("search: %s: %v", integ.Name, err)
 			continue
 		}
 
 		items, err := p.SearchItems(a.ctx, resolved, query)
 		if err != nil {
-			log.Printf("search: %s: %v", p.Name(), err)
+			log.Printf("search: %s: %v", integ.Name, err)
 			continue
 		}
-		all = append(all, items...)
+		all = append(all, store.NamespaceItems(items, integ, cfg.SameTypeCount(integ.Type))...)
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
 	return all, nil
 }
 
-// ProviderInfo describes one provider for the settings UI: its static
-// metadata (name, config fields) plus its current configuration state.
-// Secret field values are never sent to the frontend — only whether one
-// has been set — so tokens/API keys never round-trip through the webview.
-type ProviderInfo struct {
-	Name        string                  `json:"name"`
+// ProviderTypeInfo describes one registered connector type: the catalog
+// shown when picking a system type for a new integration. Unlike
+// IntegrationInfo, this carries no configuration state — it's the same for
+// everyone regardless of what they've configured.
+type ProviderTypeInfo struct {
+	Type        string                  `json:"type"`
 	DisplayName string                  `json:"displayName"`
 	Fields      []providers.ConfigField `json:"fields"`
-	Enabled     bool                    `json:"enabled"`
-	Values      map[string]string       `json:"values"`
-	SecretsSet  map[string]bool         `json:"secretsSet"`
 	ProjectHint string                  `json:"projectHint"`
 }
 
-// ListProviders returns every registered provider with its current
-// configuration, for the settings screen to render.
-func (a *App) ListProviders() ([]ProviderInfo, error) {
+// ListProviderTypes returns every registered connector type, for the "add
+// integration" form's system-type dropdown.
+func (a *App) ListProviderTypes() []ProviderTypeInfo {
+	list := providers.List()
+	result := make([]ProviderTypeInfo, 0, len(list))
+	for _, p := range list {
+		result = append(result, ProviderTypeInfo{
+			Type:        p.Name(),
+			DisplayName: p.DisplayName(),
+			Fields:      p.ConfigFields(),
+			ProjectHint: p.ProjectHint(),
+		})
+	}
+	return result
+}
+
+// IntegrationInfo describes one configured integration for the settings
+// screen: its identity (id/type/name), its type's static metadata (fields,
+// project hint), and its current configuration state. Secret field values
+// are never sent to the frontend — only whether one has been set — so
+// tokens/API keys never round-trip through the webview.
+type IntegrationInfo struct {
+	ID              string                  `json:"id"`
+	Type            string                  `json:"type"`
+	TypeDisplayName string                  `json:"typeDisplayName"`
+	Name            string                  `json:"name"`
+	Enabled         bool                    `json:"enabled"`
+	Fields          []providers.ConfigField `json:"fields"`
+	Values          map[string]string       `json:"values"`
+	SecretsSet      map[string]bool         `json:"secretsSet"`
+	ProjectHint     string                  `json:"projectHint"`
+}
+
+func integrationInfo(integ store.Integration, p providers.Provider) (IntegrationInfo, error) {
+	fields := p.ConfigFields()
+	info := IntegrationInfo{
+		ID:              integ.ID,
+		Type:            integ.Type,
+		TypeDisplayName: p.DisplayName(),
+		Name:            integ.Name,
+		Enabled:         integ.Enabled,
+		Fields:          fields,
+		Values:          map[string]string{},
+		SecretsSet:      map[string]bool{},
+		ProjectHint:     p.ProjectHint(),
+	}
+	for _, field := range fields {
+		if field.Kind == providers.FieldSecret {
+			secret, err := store.GetSecret(integ.ID, field.Key)
+			if err != nil {
+				return IntegrationInfo{}, fmt.Errorf("no se pudo leer el secreto de %s: %w", integ.Name, err)
+			}
+			info.SecretsSet[field.Key] = secret != ""
+		} else {
+			info.Values[field.Key] = integ.Values[field.Key]
+		}
+	}
+	return info, nil
+}
+
+// ListIntegrations returns every configured integration, for the settings
+// screen to render. An integration whose provider type is no longer
+// registered is skipped rather than crashing the settings screen.
+func (a *App) ListIntegrations() ([]IntegrationInfo, error) {
 	cfg, err := store.Load()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]ProviderInfo, 0)
-	for _, p := range providers.List() {
-		pc := cfg.Providers[p.Name()]
-		fields := p.ConfigFields()
-
-		info := ProviderInfo{
-			Name:        p.Name(),
-			DisplayName: p.DisplayName(),
-			Fields:      fields,
-			Enabled:     pc.Enabled,
-			Values:      map[string]string{},
-			SecretsSet:  map[string]bool{},
-			ProjectHint: p.ProjectHint(),
+	result := make([]IntegrationInfo, 0, len(cfg.Integrations))
+	for _, integ := range cfg.Integrations {
+		p, ok := providers.Get(integ.Type)
+		if !ok {
+			continue
 		}
-
-		for _, field := range fields {
-			if field.Kind == providers.FieldSecret {
-				secret, err := store.GetSecret(p.Name(), field.Key)
-				if err != nil {
-					return nil, fmt.Errorf("no se pudo leer el secreto de %s: %w", p.DisplayName(), err)
-				}
-				info.SecretsSet[field.Key] = secret != ""
-			} else {
-				info.Values[field.Key] = pc.Values[field.Key]
-			}
+		info, err := integrationInfo(integ, p)
+		if err != nil {
+			return nil, err
 		}
-
 		result = append(result, info)
 	}
 	return result, nil
 }
 
-// SaveProviderConfig persists one provider's settings: non-secret values go
-// to the config file, secret values go to the OS keychain. A blank secret
-// value leaves any previously stored secret untouched (the settings form
-// never pre-fills secrets, so an empty field means "unchanged", not "clear").
-func (a *App) SaveProviderConfig(providerName string, enabled bool, values map[string]string) error {
-	p, ok := providers.Get(providerName)
+// defaultIntegrationName suggests a name for a new integration when the
+// user leaves it blank: the type's own display name, disambiguated with a
+// counter if one of that type already exists ("GitLab", then "GitLab (2)",
+// "GitLab (3)", ...).
+func defaultIntegrationName(existing []store.Integration, displayName, providerType string) string {
+	count := 0
+	for _, integ := range existing {
+		if integ.Type == providerType {
+			count++
+		}
+	}
+	if count == 0 {
+		return displayName
+	}
+	return fmt.Sprintf("%s (%d)", displayName, count+1)
+}
+
+// CreateIntegration adds a new named connection of the given provider type,
+// enabled by default. See defaultIntegrationName for what a blank name
+// becomes.
+func (a *App) CreateIntegration(providerType, name string, values map[string]string) (IntegrationInfo, error) {
+	p, ok := providers.Get(providerType)
 	if !ok {
-		return fmt.Errorf("proveedor desconocido: %s", providerName)
+		return IntegrationInfo{}, fmt.Errorf("tipo de proveedor desconocido: %s", providerType)
 	}
 
+	cfg, err := store.Load()
+	if err != nil {
+		return IntegrationInfo{}, err
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = defaultIntegrationName(cfg.Integrations, p.DisplayName(), providerType)
+	}
+
+	integ := store.Integration{
+		ID:      store.NewIntegrationID(providerType),
+		Type:    providerType,
+		Name:    name,
+		Enabled: true,
+		Values:  map[string]string{},
+	}
+
+	for _, field := range p.ConfigFields() {
+		value, provided := values[field.Key]
+		if !provided || value == "" {
+			continue
+		}
+		if field.Kind == providers.FieldSecret {
+			if err := store.SetSecret(integ.ID, field.Key, value); err != nil {
+				return IntegrationInfo{}, fmt.Errorf("no se pudo guardar el secreto: %w", err)
+			}
+		} else {
+			integ.Values[field.Key] = value
+		}
+	}
+
+	cfg.Integrations = append(cfg.Integrations, integ)
+	if err := store.Save(cfg); err != nil {
+		return IntegrationInfo{}, err
+	}
+
+	return integrationInfo(integ, p)
+}
+
+// UpdateIntegration persists one integration's settings: non-secret values
+// go to the config file, secret values go to the OS keychain. A blank
+// secret value leaves any previously stored secret untouched (the settings
+// form never pre-fills secrets, so an empty field means "unchanged", not
+// "clear"). A blank name leaves the integration's existing name untouched.
+func (a *App) UpdateIntegration(id, name string, enabled bool, values map[string]string) error {
 	cfg, err := store.Load()
 	if err != nil {
 		return err
 	}
 
-	pc := cfg.Providers[providerName]
-	pc.Enabled = enabled
-	if pc.Values == nil {
-		pc.Values = map[string]string{}
+	idx := -1
+	for i, integ := range cfg.Integrations {
+		if integ.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("integración desconocida: %s", id)
+	}
+
+	integ := cfg.Integrations[idx]
+	p, ok := providers.Get(integ.Type)
+	if !ok {
+		return fmt.Errorf("tipo de proveedor desconocido: %s", integ.Type)
+	}
+
+	if name = strings.TrimSpace(name); name != "" {
+		integ.Name = name
+	}
+	integ.Enabled = enabled
+	if integ.Values == nil {
+		integ.Values = map[string]string{}
 	}
 
 	for _, field := range p.ConfigFields() {
@@ -423,28 +576,66 @@ func (a *App) SaveProviderConfig(providerName string, enabled bool, values map[s
 			if value == "" {
 				continue
 			}
-			if err := store.SetSecret(providerName, field.Key, value); err != nil {
+			if err := store.SetSecret(integ.ID, field.Key, value); err != nil {
 				return fmt.Errorf("no se pudo guardar el secreto: %w", err)
 			}
 		} else {
-			pc.Values[field.Key] = value
+			integ.Values[field.Key] = value
 		}
 	}
 
-	cfg.Providers[providerName] = pc
+	cfg.Integrations[idx] = integ
 	return store.Save(cfg)
 }
 
-// TestConnection verifies connectivity for a provider using the given
-// (possibly unsaved) form values, falling back to already-stored values for
-// any field left blank — so "Probar conexión" works before hitting Guardar.
-func (a *App) TestConnection(providerName string, values map[string]string) error {
-	p, ok := providers.Get(providerName)
-	if !ok {
-		return fmt.Errorf("proveedor desconocido: %s", providerName)
+// DeleteIntegration removes one integration and every secret it had stored
+// in the OS keychain. A no-op if the ID isn't found (already gone).
+func (a *App) DeleteIntegration(id string) error {
+	cfg, err := store.Load()
+	if err != nil {
+		return err
 	}
 
-	resolved, err := a.resolveProviderConfig(p, providerName, values)
+	idx := -1
+	for i, integ := range cfg.Integrations {
+		if integ.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+
+	integ := cfg.Integrations[idx]
+	if p, ok := providers.Get(integ.Type); ok {
+		for _, field := range p.ConfigFields() {
+			if field.Kind != providers.FieldSecret {
+				continue
+			}
+			if err := store.DeleteSecret(integ.ID, field.Key); err != nil {
+				log.Printf("no se pudo borrar el secreto %s de %s: %v", field.Key, integ.Name, err)
+			}
+		}
+	}
+
+	cfg.Integrations = append(cfg.Integrations[:idx], cfg.Integrations[idx+1:]...)
+	return store.Save(cfg)
+}
+
+// TestConnection verifies connectivity for a provider type using the given
+// (possibly unsaved) form values, falling back to integrationID's
+// already-stored values for any field left blank — so "Probar conexión"
+// works before hitting Guardar. integrationID is "" when testing a
+// not-yet-created integration (ResolveConfig degrades to an all-blank
+// config for an unknown ID, which the draft values then fully cover).
+func (a *App) TestConnection(providerType, integrationID string, values map[string]string) error {
+	p, ok := providers.Get(providerType)
+	if !ok {
+		return fmt.Errorf("tipo de proveedor desconocido: %s", providerType)
+	}
+
+	resolved, err := a.resolveDraftConfig(p, integrationID, values)
 	if err != nil {
 		return err
 	}
@@ -454,8 +645,8 @@ func (a *App) TestConnection(providerName string, values map[string]string) erro
 	return p.TestConnection(ctx, resolved)
 }
 
-func (a *App) resolveProviderConfig(p providers.Provider, providerName string, values map[string]string) (providers.Config, error) {
-	resolved, err := store.ResolveConfig(p, providerName)
+func (a *App) resolveDraftConfig(p providers.Provider, integrationID string, values map[string]string) (providers.Config, error) {
+	resolved, err := store.ResolveConfig(p, integrationID)
 	if err != nil {
 		return nil, err
 	}

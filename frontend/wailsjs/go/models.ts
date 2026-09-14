@@ -1,47 +1,87 @@
 export namespace main {
 	
 	export class CreateTaskInput {
-	    provider: string;
+	    integration: string;
 	    project: string;
 	    title: string;
 	    description: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CreateTaskInput(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.provider = source["provider"];
+	        this.integration = source["integration"];
 	        this.project = source["project"];
 	        this.title = source["title"];
 	        this.description = source["description"];
 	    }
 	}
-	export class ProviderInfo {
-	    name: string;
+	export class ProviderTypeInfo {
+	    type: string;
 	    displayName: string;
 	    fields: providers.ConfigField[];
+	    projectHint: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ProviderTypeInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.displayName = source["displayName"];
+	        this.fields = this.convertValues(source["fields"], providers.ConfigField);
+	        this.projectHint = source["projectHint"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class IntegrationInfo {
+	    id: string;
+	    type: string;
+	    typeDisplayName: string;
+	    name: string;
 	    enabled: boolean;
+	    fields: providers.ConfigField[];
 	    values: Record<string, string>;
 	    secretsSet: Record<string, boolean>;
 	    projectHint: string;
-	
+
 	    static createFrom(source: any = {}) {
-	        return new ProviderInfo(source);
+	        return new IntegrationInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.typeDisplayName = source["typeDisplayName"];
 	        this.name = source["name"];
-	        this.displayName = source["displayName"];
-	        this.fields = this.convertValues(source["fields"], providers.ConfigField);
 	        this.enabled = source["enabled"];
+	        this.fields = this.convertValues(source["fields"], providers.ConfigField);
 	        this.values = source["values"];
 	        this.secretsSet = source["secretsSet"];
 	        this.projectHint = source["projectHint"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -136,6 +176,7 @@ export namespace providers {
 	}
 	export class TaskItem {
 	    id: string;
+	    integrationId: string;
 	    provider: string;
 	    type: string;
 	    title: string;
@@ -156,6 +197,7 @@ export namespace providers {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.integrationId = source["integrationId"];
 	        this.provider = source["provider"];
 	        this.type = source["type"];
 	        this.title = source["title"];

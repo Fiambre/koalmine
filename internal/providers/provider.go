@@ -24,13 +24,17 @@ const (
 // every provider.
 type TaskItem struct {
 	// ID is stable and unique within its provider; used for notification dedup.
-	ID       string   `json:"id"`
-	Provider string   `json:"provider"`
-	Type     ItemType `json:"type"`
-	Title    string   `json:"title"`
-	URL      string   `json:"url"`
-	Project  string   `json:"project"`
-	Status   string   `json:"status"`
+	ID string `json:"id"`
+	// IntegrationID identifies which configured connection (not just which
+	// provider type) this item came from — see store.NamespaceItem. Left
+	// blank by providers themselves; stamped on by the app layer.
+	IntegrationID string   `json:"integrationId"`
+	Provider      string   `json:"provider"`
+	Type          ItemType `json:"type"`
+	Title         string   `json:"title"`
+	URL           string   `json:"url"`
+	Project       string   `json:"project"`
+	Status        string   `json:"status"`
 	// Closed reports whether the item is in a terminal state (closed issue,
 	// closed or merged PR/MR) — used to drop it from views that only want
 	// actionable items, e.g. Seguimiento's default (non-search) list.

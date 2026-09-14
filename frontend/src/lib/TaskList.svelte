@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { _ } from 'svelte-i18n'
-  import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
+  import { GetTasks, RefreshNow, OpenURL, ListIntegrations, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
   import { starredItems, toggleStar, updateStarredItem, markRefreshed, needsRefresh } from './starred'
@@ -24,7 +24,7 @@
   let loadError = ''
   let selected: providers.TaskItem | null = null
 
-  let providerList: main.ProviderInfo[] = []
+  let integrationList: main.IntegrationInfo[] = []
   let showForm = false
   let formProvider = ''
   let formProject = ''
@@ -109,8 +109,8 @@
     loadComments(selected)
   }
 
-  $: enabledProviders = providerList.filter((p) => p.enabled)
-  $: formProviderInfo = enabledProviders.find((p) => p.name === formProvider) ?? null
+  $: enabledIntegrations = integrationList.filter((i) => i.enabled)
+  $: formProviderInfo = enabledIntegrations.find((i) => i.id === formProvider) ?? null
   $: showProjectDropdown = !manualProject && !loadingProjects && projectOptions.length > 0
 
   function onUpdated(items: providers.TaskItem[]) {
@@ -132,9 +132,9 @@
       loadedOnce = true
     }
     try {
-      providerList = await ListProviders()
+      integrationList = await ListIntegrations()
     } catch {
-      // The "new task" form just won't have any provider to offer.
+      // The "new task" form just won't have any integration to offer.
     }
     if (lockToStarred) refreshStarred()
   })
@@ -221,8 +221,8 @@
   }
 
   function openForm() {
-    if (!formProvider && enabledProviders.length > 0) {
-      formProvider = enabledProviders[0].name
+    if (!formProvider && enabledIntegrations.length > 0) {
+      formProvider = enabledIntegrations[0].id
     }
     createError = ''
     selected = null
@@ -273,7 +273,7 @@
     createError = ''
     try {
       const created = await CreateTask({
-        provider: formProvider,
+        integration: formProvider,
         project: formProject.trim(),
         title: formTitle.trim(),
         description: formDescription.trim(),
@@ -315,7 +315,7 @@
       {/if}
     </div>
     <div class="header-actions">
-      <button class="new-task" on:click={openForm} disabled={enabledProviders.length === 0} title={enabledProviders.length === 0 ? $_('tasks.newTaskDisabledHint') : $_('tasks.newTask')}>
+      <button class="new-task" on:click={openForm} disabled={enabledIntegrations.length === 0} title={enabledIntegrations.length === 0 ? $_('tasks.newTaskDisabledHint') : $_('tasks.newTask')}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14" stroke-linecap="round" />
         </svg>
@@ -505,8 +505,8 @@
       <label class="form-field">
         <span>{$_('tasks.formProvider')}</span>
         <select value={formProvider} on:change={onProviderChange}>
-          {#each enabledProviders as p (p.name)}
-            <option value={p.name}>{p.displayName}</option>
+          {#each enabledIntegrations as i (i.id)}
+            <option value={i.id}>{i.name}</option>
           {/each}
         </select>
       </label>

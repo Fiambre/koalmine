@@ -8,7 +8,11 @@ export function ApplyUpdate():Promise<void>;
 
 export function CheckForUpdateNow():Promise<updater.Info>;
 
+export function CreateIntegration(arg1:string,arg2:string,arg3:Record<string, string>):Promise<main.IntegrationInfo>;
+
 export function CreateTask(arg1:main.CreateTaskInput):Promise<providers.TaskItem>;
+
+export function DeleteIntegration(arg1:string):Promise<void>;
 
 export function GetAppVersion():Promise<string>;
 
@@ -22,9 +26,11 @@ export function GetTasks():Promise<Array<providers.TaskItem>>;
 
 export function GetUpdateStatus():Promise<updater.Info>;
 
+export function ListIntegrations():Promise<Array<main.IntegrationInfo>>;
+
 export function ListProjects(arg1:string):Promise<Array<providers.ProjectOption>>;
 
-export function ListProviders():Promise<Array<main.ProviderInfo>>;
+export function ListProviderTypes():Promise<Array<main.ProviderTypeInfo>>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
@@ -32,12 +38,12 @@ export function RefreshNow():Promise<void>;
 
 export function RefreshTaskItem(arg1:providers.TaskItem):Promise<providers.TaskItem>;
 
-export function SaveProviderConfig(arg1:string,arg2:boolean,arg3:Record<string, string>):Promise<void>;
-
 export function SearchTasks(arg1:string):Promise<Array<providers.TaskItem>>;
 
 export function SetAutostartEnabled(arg1:boolean):Promise<void>;
 
 export function SetPollIntervalMinutes(arg1:number):Promise<void>;
 
-export function TestConnection(arg1:string,arg2:Record<string, string>):Promise<void>;
+export function TestConnection(arg1:string,arg2:string,arg3:Record<string, string>):Promise<void>;
+
+export function UpdateIntegration(arg1:string,arg2:string,arg3:boolean,arg4:Record<string, string>):Promise<void>;

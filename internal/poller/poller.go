@@ -72,34 +72,36 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		return
 	}
 
-	displayNames := map[string]string{}
 	var all []providers.TaskItem
 
-	for _, provider := range providers.List() {
-		displayNames[provider.Name()] = provider.DisplayName()
-
-		pc, ok := cfg.Providers[provider.Name()]
-		if !ok || !pc.Enabled {
+	for _, integ := range cfg.Integrations {
+		if !integ.Enabled {
 			continue
 		}
 
-		resolved, err := store.ResolveConfig(provider, provider.Name())
+		provider, ok := providers.Get(integ.Type)
+		if !ok {
+			log.Printf("poller: %s: tipo de proveedor desconocido: %s", integ.Name, integ.Type)
+			continue
+		}
+
+		resolved, err := store.ResolveConfig(provider, integ.ID)
 		if err != nil {
-			log.Printf("poller: %s: %v", provider.Name(), err)
+			log.Printf("poller: %s: %v", integ.Name, err)
 			continue
 		}
 
 		items, err := provider.FetchItems(ctx, resolved)
 		if err != nil {
-			log.Printf("poller: %s: %v", provider.Name(), err)
+			log.Printf("poller: %s: %v", integ.Name, err)
 			continue
 		}
-		all = append(all, items...)
+		all = append(all, store.NamespaceItems(items, integ, cfg.SameTypeCount(integ.Type))...)
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
 
-	p.notifyNewItems(all, displayNames)
+	p.notifyNewItems(all)
 
 	if p.OnUpdate != nil {
 		p.OnUpdate(all)
@@ -110,7 +112,7 @@ func (p *Poller) pollOnce(ctx context.Context) {
 // notification for each one not seen before. Nothing is notified on the
 // very first poll ever (there's no "new" relative to a state that doesn't
 // exist yet) — it just seeds the state.
-func (p *Poller) notifyNewItems(items []providers.TaskItem, displayNames map[string]string) {
+func (p *Poller) notifyNewItems(items []providers.TaskItem) {
 	state, err := store.LoadSeenState()
 	if err != nil {
 		log.Printf("poller: no se pudo cargar el estado: %v", err)
@@ -132,7 +134,7 @@ func (p *Poller) notifyNewItems(items []providers.TaskItem, displayNames map[str
 	// "new" relative to a state that didn't exist yet, it just seeds it.
 	if !firstRun {
 		for _, item := range fresh {
-			title := typeLabel(item.Type) + " · " + displayNames[item.Provider]
+			title := typeLabel(item.Type) + " · " + item.Provider
 			if err := notify.Send(title, item.Title); err != nil {
 				log.Printf("poller: no se pudo enviar la notificación: %v", err)
 			}

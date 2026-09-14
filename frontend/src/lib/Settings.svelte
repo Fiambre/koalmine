@@ -2,8 +2,11 @@
   import { onMount, onDestroy } from 'svelte'
   import { _ } from 'svelte-i18n'
   import {
-    ListProviders,
-    SaveProviderConfig,
+    ListProviderTypes,
+    ListIntegrations,
+    CreateIntegration,
+    UpdateIntegration,
+    DeleteIntegration,
     TestConnection,
     GetAutostartEnabled,
     SetAutostartEnabled,
@@ -29,7 +32,8 @@
     saveAccent(hex)
   }
 
-  let providerList: main.ProviderInfo[] = []
+  let providerTypes: main.ProviderTypeInfo[] = []
+  let integrations: main.IntegrationInfo[] = []
   let loading = true
   let loadError = ''
 
@@ -41,20 +45,23 @@
   let updateStatus: Status = { kind: 'idle' }
   let checkStatus: Status = { kind: 'idle' }
 
-  // Per-provider draft form state, keyed by provider name.
+  // Per-integration draft form state, keyed by integration id.
   let drafts: Record<string, Record<string, string>> = {}
+  let nameDrafts: Record<string, string> = {}
   let enabledDrafts: Record<string, boolean> = {}
-  let statusByProvider: Record<string, Status> = {}
+  let statusByIntegration: Record<string, Status> = {}
 
   async function load() {
     loading = true
     loadError = ''
     try {
-      providerList = await ListProviders()
-      for (const p of providerList) {
-        drafts[p.name] = { ...p.values }
-        enabledDrafts[p.name] = p.enabled
-        statusByProvider[p.name] = { kind: 'idle' }
+      providerTypes = await ListProviderTypes()
+      integrations = await ListIntegrations()
+      for (const integ of integrations) {
+        drafts[integ.id] = { ...integ.values }
+        nameDrafts[integ.id] = integ.name
+        enabledDrafts[integ.id] = integ.enabled
+        statusByIntegration[integ.id] = { kind: 'idle' }
       }
       autostart = await GetAutostartEnabled()
       appVersion = await GetAppVersion()
@@ -114,24 +121,96 @@
     }
   }
 
-  async function testConnection(p: main.ProviderInfo) {
-    statusByProvider[p.name] = { kind: 'testing' }
+  async function testConnection(integ: main.IntegrationInfo) {
+    statusByIntegration[integ.id] = { kind: 'testing' }
     try {
-      await TestConnection(p.name, drafts[p.name] ?? {})
-      statusByProvider[p.name] = { kind: 'ok', message: $_('settings.connectionOk') }
+      await TestConnection(integ.type, integ.id, drafts[integ.id] ?? {})
+      statusByIntegration[integ.id] = { kind: 'ok', message: $_('settings.connectionOk') }
     } catch (e) {
-      statusByProvider[p.name] = { kind: 'error', message: String(e) }
+      statusByIntegration[integ.id] = { kind: 'error', message: String(e) }
     }
   }
 
-  async function save(p: main.ProviderInfo) {
-    statusByProvider[p.name] = { kind: 'saving' }
+  async function saveIntegration(integ: main.IntegrationInfo) {
+    statusByIntegration[integ.id] = { kind: 'saving' }
     try {
-      await SaveProviderConfig(p.name, enabledDrafts[p.name] ?? false, drafts[p.name] ?? {})
+      await UpdateIntegration(integ.id, nameDrafts[integ.id] ?? integ.name, enabledDrafts[integ.id] ?? false, drafts[integ.id] ?? {})
       await load()
-      statusByProvider[p.name] = { kind: 'saved', message: $_('settings.saved') }
+      statusByIntegration[integ.id] = { kind: 'saved', message: $_('settings.saved') }
     } catch (e) {
-      statusByProvider[p.name] = { kind: 'error', message: String(e) }
+      statusByIntegration[integ.id] = { kind: 'error', message: String(e) }
+    }
+  }
+
+  async function deleteIntegration(integ: main.IntegrationInfo) {
+    if (!confirm($_('settings.deleteConfirm', { values: { name: integ.name } }))) return
+    try {
+      await DeleteIntegration(integ.id)
+      await load()
+    } catch (e) {
+      statusByIntegration[integ.id] = { kind: 'error', message: String(e) }
+    }
+  }
+
+  // --- Add integration ---
+
+  let showAddForm = false
+  let newType = ''
+  let newName = ''
+  let newDrafts: Record<string, string> = {}
+  let newStatus: Status = { kind: 'idle' }
+  let creatingIntegration = false
+
+  $: newTypeInfo = providerTypes.find((t) => t.type === newType) ?? null
+
+  function defaultNameFor(type: main.ProviderTypeInfo): string {
+    const count = integrations.filter((integ) => integ.type === type.type).length
+    return count === 0 ? type.displayName : `${type.displayName} (${count + 1})`
+  }
+
+  function openAddForm() {
+    showAddForm = true
+    newStatus = { kind: 'idle' }
+    if (!newType && providerTypes.length > 0) {
+      onNewTypeChange(providerTypes[0].type)
+    }
+  }
+
+  function closeAddForm() {
+    showAddForm = false
+    newType = ''
+    newName = ''
+    newDrafts = {}
+    newStatus = { kind: 'idle' }
+  }
+
+  function onNewTypeChange(type: string) {
+    newType = type
+    const info = providerTypes.find((t) => t.type === type)
+    newDrafts = Object.fromEntries((info?.fields ?? []).map((f) => [f.key, '']))
+    newName = info ? defaultNameFor(info) : ''
+  }
+
+  async function testNewConnection() {
+    newStatus = { kind: 'testing' }
+    try {
+      await TestConnection(newType, '', newDrafts)
+      newStatus = { kind: 'ok', message: $_('settings.connectionOk') }
+    } catch (e) {
+      newStatus = { kind: 'error', message: String(e) }
+    }
+  }
+
+  async function createIntegration() {
+    creatingIntegration = true
+    try {
+      await CreateIntegration(newType, newName, newDrafts)
+      await load()
+      closeAddForm()
+    } catch (e) {
+      newStatus = { kind: 'error', message: String(e) }
+    } finally {
+      creatingIntegration = false
     }
   }
 </script>
@@ -211,34 +290,95 @@
       {/if}
     </article>
 
-    <h2>{$_('settings.providersTitle')}</h2>
+    <div class="integrations-header">
+      <h2>{$_('settings.integrationsTitle')}</h2>
+      {#if !showAddForm}
+        <button class="primary" on:click={openAddForm} disabled={providerTypes.length === 0}>
+          {$_('settings.addIntegration')}
+        </button>
+      {/if}
+    </div>
 
-    {#each providerList as p (p.name)}
-      <article class="provider-card">
+    {#if showAddForm}
+      <article class="provider-card add-card">
         <header>
-          <label class="enable-toggle">
-            <input type="checkbox" bind:checked={enabledDrafts[p.name]} />
-            <strong>{p.displayName}</strong>
+          <label class="field type-field">
+            <span>{$_('settings.typeLabel')}</span>
+            <select value={newType} on:change={(e) => onNewTypeChange((e.target as HTMLSelectElement).value)}>
+              {#each providerTypes as type (type.type)}
+                <option value={type.type}>{type.displayName}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="field">
+            <span>{$_('settings.nameLabel')}</span>
+            <input type="text" autocomplete="off" bind:value={newName} />
           </label>
         </header>
 
+        {#if newTypeInfo}
+          <div class="fields">
+            {#each newTypeInfo.fields as field (field.key)}
+              <label class="field">
+                <span>{$_(field.label)}{field.required ? ' *' : ''}</span>
+                <input
+                  type={field.kind === 'secret' ? 'password' : field.kind === 'url' ? 'url' : 'text'}
+                  autocomplete="off"
+                  placeholder={field.placeholder}
+                  bind:value={newDrafts[field.key]}
+                />
+              </label>
+            {/each}
+          </div>
+        {/if}
+
+        <footer>
+          <button on:click={closeAddForm}>{$_('tasks.formCancel')}</button>
+          <button on:click={testNewConnection} disabled={newStatus.kind === 'testing' || !newType}>
+            {newStatus.kind === 'testing' ? $_('settings.testing') : $_('settings.testConnection')}
+          </button>
+          <button class="primary" on:click={createIntegration} disabled={creatingIntegration || !newType}>
+            {creatingIntegration ? $_('settings.creatingIntegration') : $_('settings.createIntegration')}
+          </button>
+          {#if newStatus.kind === 'ok' || newStatus.kind === 'error'}
+            <span class="status" class:ok={newStatus.kind === 'ok'} class:error={newStatus.kind === 'error'}>
+              {newStatus.message}
+            </span>
+          {/if}
+        </footer>
+      </article>
+    {/if}
+
+    {#each integrations as integ (integ.id)}
+      <article class="provider-card">
+        <header class="integration-header">
+          <label class="enable-toggle">
+            <input type="checkbox" bind:checked={enabledDrafts[integ.id]} />
+          </label>
+          <input type="text" class="name-input" autocomplete="off" bind:value={nameDrafts[integ.id]} />
+          <span class="type-badge">{integ.typeDisplayName}</span>
+          <button class="delete-btn" on:click={() => deleteIntegration(integ)} title={$_('settings.deleteIntegration')}>
+            {$_('settings.deleteIntegration')}
+          </button>
+        </header>
+
         <div class="fields">
-          {#each p.fields as field (field.key)}
+          {#each integ.fields as field (field.key)}
             <label class="field">
               <span>{$_(field.label)}{field.required ? ' *' : ''}</span>
               {#if field.kind === 'secret'}
                 <input
                   type="password"
                   autocomplete="off"
-                  placeholder={p.secretsSet[field.key] ? $_('settings.secretUnchanged') : field.placeholder}
-                  bind:value={drafts[p.name][field.key]}
+                  placeholder={integ.secretsSet[field.key] ? $_('settings.secretUnchanged') : field.placeholder}
+                  bind:value={drafts[integ.id][field.key]}
                 />
               {:else}
                 <input
                   type={field.kind === 'url' ? 'url' : 'text'}
                   autocomplete="off"
                   placeholder={field.placeholder}
-                  bind:value={drafts[p.name][field.key]}
+                  bind:value={drafts[integ.id][field.key]}
                 />
               {/if}
             </label>
@@ -246,16 +386,16 @@
         </div>
 
         <footer>
-          <button on:click={() => testConnection(p)} disabled={statusByProvider[p.name]?.kind === 'testing'}>
-            {statusByProvider[p.name]?.kind === 'testing' ? $_('settings.testing') : $_('settings.testConnection')}
+          <button on:click={() => testConnection(integ)} disabled={statusByIntegration[integ.id]?.kind === 'testing'}>
+            {statusByIntegration[integ.id]?.kind === 'testing' ? $_('settings.testing') : $_('settings.testConnection')}
           </button>
-          <button class="primary" on:click={() => save(p)} disabled={statusByProvider[p.name]?.kind === 'saving'}>
-            {statusByProvider[p.name]?.kind === 'saving' ? $_('settings.saving') : $_('settings.save')}
+          <button class="primary" on:click={() => saveIntegration(integ)} disabled={statusByIntegration[integ.id]?.kind === 'saving'}>
+            {statusByIntegration[integ.id]?.kind === 'saving' ? $_('settings.saving') : $_('settings.save')}
           </button>
-          {#if statusByProvider[p.name]?.kind === 'ok' || statusByProvider[p.name]?.kind === 'saved'}
-            <span class="status ok">{statusByProvider[p.name]?.message}</span>
-          {:else if statusByProvider[p.name]?.kind === 'error'}
-            <span class="status error">{statusByProvider[p.name]?.message}</span>
+          {#if statusByIntegration[integ.id]?.kind === 'ok' || statusByIntegration[integ.id]?.kind === 'saved'}
+            <span class="status ok">{statusByIntegration[integ.id]?.message}</span>
+          {:else if statusByIntegration[integ.id]?.kind === 'error'}
+            <span class="status error">{statusByIntegration[integ.id]?.message}</span>
           {/if}
         </footer>
       </article>
@@ -319,6 +459,85 @@
     border-radius: var(--radius);
     padding: 1.1rem;
     margin-bottom: 1rem;
+  }
+
+  .integrations-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .integrations-header h2 {
+    margin: 1.5rem 0 0.75rem;
+  }
+
+  .add-card header {
+    display: flex;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+  }
+
+  .type-field select {
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+
+  .integration-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .integration-header .enable-toggle {
+    flex-shrink: 0;
+  }
+
+  .name-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 700;
+    padding: 0.3rem 0.4rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .name-input:hover,
+  .name-input:focus {
+    border-color: var(--border);
+    background: var(--bg);
+    outline: none;
+  }
+
+  .type-badge {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: var(--bg-elevated-hover);
+    color: var(--text-muted);
+  }
+
+  .delete-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    padding: 0.3rem 0.5rem;
+  }
+
+  .delete-btn:hover {
+    color: #ff8a8a;
+    background: transparent;
   }
 
   .swatches {
