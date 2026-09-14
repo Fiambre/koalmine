@@ -122,12 +122,16 @@
       "gitlab": {
         "baseUrl": "Instance URL (blank = gitlab.com)",
         "token": "Personal Access Token"
+      },
+      "todoist": {
+        "token": "API Token"
       }
     },
     "hint": {
       "redmine": "Redmine project identifier (e.g. my-project)",
       "github": "owner/repo (e.g. octocat/Hello-World)",
-      "gitlab": "namespace/project or numeric ID (e.g. group/project)"
+      "gitlab": "namespace/project or numeric ID (e.g. group/project)",
+      "todoist": "Project ID (pick it from the list)"
     }
   }
 }
