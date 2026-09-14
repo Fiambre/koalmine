@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
+  import { _ } from 'svelte-i18n'
   import Settings from './lib/Settings.svelte'
   import TaskList from './lib/TaskList.svelte'
   import { GetTasks } from '../wailsjs/go/main/App.js'
@@ -10,7 +11,9 @@
   let view: 'tasks' | 'watchlist' | 'settings' = 'tasks'
   let taskCount = 0
 
-  $: watchCount = Object.keys($starredItems).length
+  // Matches Seguimiento's default view (closed items hidden), so the badge
+  // doesn't count entries the user won't actually see there.
+  $: watchCount = Object.values($starredItems).filter((item) => !item.closed).length
 
   function onUpdated(items: providers.TaskItem[]) {
     taskCount = items?.length ?? 0
@@ -46,14 +49,14 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round" />
         </svg>
-        <span>Tareas</span>
+        <span>{$_('nav.tasks')}</span>
         {#if taskCount > 0}<span class="count">{taskCount}</span>{/if}
       </button>
       <button class:active={view === 'watchlist'} on:click={() => (view = 'watchlist')}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
         </svg>
-        <span>Seguimiento</span>
+        <span>{$_('nav.watchlist')}</span>
         {#if watchCount > 0}<span class="count">{watchCount}</span>{/if}
       </button>
       <button class:active={view === 'settings'} on:click={() => (view = 'settings')}>
@@ -63,7 +66,7 @@
             d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
           />
         </svg>
-        <span>Configuración</span>
+        <span>{$_('nav.settings')}</span>
       </button>
     </nav>
   </aside>

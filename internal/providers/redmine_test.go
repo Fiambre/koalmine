@@ -142,9 +142,16 @@ func TestRedmineSearchItems(t *testing.T) {
 						"description": "El build falla en CI.",
 						"updated_on":  "2026-09-01T10:00:00Z",
 						"project":     map[string]any{"name": "Koalmine"},
-						"status":      map[string]any{"name": "En curso"},
+						"status":      map[string]any{"id": 2, "name": "En curso"},
 						"author":      map[string]any{"id": 9, "name": "Otra Persona"},
 					},
+				},
+			})
+		case "/issue_statuses.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue_statuses": []map[string]any{
+					{"id": 1, "is_closed": true},
+					{"id": 2, "is_closed": false},
 				},
 			})
 		case "/users/current.json":
@@ -172,6 +179,9 @@ func TestRedmineSearchItems(t *testing.T) {
 	if item.Project != "Koalmine" || item.Status != "En curso" {
 		t.Errorf("expected project/status backfilled from the bulk issue lookup, got: %+v", item)
 	}
+	if item.Closed {
+		t.Errorf("expected Closed false for a status not marked is_closed, got true")
+	}
 	if item.CreatedByMe {
 		t.Errorf("expected CreatedByMe false for an issue authored by someone else, got true")
 	}
@@ -190,17 +200,26 @@ func TestRedmineSearchItemsEmptyQuery(t *testing.T) {
 
 func TestRedmineSearchItemsByTicketNumber(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/issues/42.json" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues/42.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue": map[string]any{
+					"id":         42,
+					"subject":    "Arreglar el build",
+					"updated_on": "2026-09-01T10:00:00Z",
+					"status":     map[string]any{"id": 1, "name": "Cerrado"},
+				},
+			})
+		case "/issue_statuses.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue_statuses": []map[string]any{
+					{"id": 1, "is_closed": true},
+				},
+			})
+		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issue": map[string]any{
-				"id":         42,
-				"subject":    "Arreglar el build",
-				"updated_on": "2026-09-01T10:00:00Z",
-			},
-		})
 	}))
 	defer server.Close()
 
@@ -214,6 +233,9 @@ func TestRedmineSearchItemsByTicketNumber(t *testing.T) {
 		}
 		if len(items) != 1 || items[0].ID != "redmine:42" || items[0].Title != "Arreglar el build" {
 			t.Errorf("SearchItems(%q): unexpected items: %+v", query, items)
+		}
+		if !items[0].Closed {
+			t.Errorf("SearchItems(%q): expected Closed true for a status marked is_closed, got false", query)
 		}
 	}
 }
@@ -249,19 +271,28 @@ func TestRedmineSearchItemsByTicketNumberFallsBackWhenNotFound(t *testing.T) {
 
 func TestRedmineFetchItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/issues/42.json" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues/42.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue": map[string]any{
+					"id":         42,
+					"subject":    "Arreglar el build",
+					"updated_on": "2026-09-01T10:00:00Z",
+					"project":    map[string]any{"name": "Koalmine"},
+					"status":     map[string]any{"id": 2, "name": "En curso"},
+				},
+			})
+		case "/issue_statuses.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue_statuses": []map[string]any{
+					{"id": 1, "is_closed": true},
+					{"id": 2, "is_closed": false},
+				},
+			})
+		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issue": map[string]any{
-				"id":         42,
-				"subject":    "Arreglar el build",
-				"updated_on": "2026-09-01T10:00:00Z",
-				"project":    map[string]any{"name": "Koalmine"},
-				"status":     map[string]any{"name": "En curso"},
-			},
-		})
 	}))
 	defer server.Close()
 
@@ -273,6 +304,9 @@ func TestRedmineFetchItem(t *testing.T) {
 	}
 	if fresh.Project != "Koalmine" || fresh.Status != "En curso" {
 		t.Errorf("unexpected item: %+v", fresh)
+	}
+	if fresh.Closed {
+		t.Errorf("expected Closed false for a status not marked is_closed, got true")
 	}
 }
 

@@ -1,16 +1,18 @@
-export type AccentColor = { name: string; value: string }
+// nameKey is an i18n key under "accent.*" — the display name is resolved
+// at render time so it stays in sync with the current language.
+export type AccentColor = { nameKey: string; value: string }
 
 export const ACCENT_COLORS: AccentColor[] = [
-  { name: 'Rojo', value: '#db4c3f' },
-  { name: 'Naranja', value: '#e58b2e' },
-  { name: 'Amarillo', value: '#c9a227' },
-  { name: 'Verde', value: '#4a9c5d' },
-  { name: 'Verde azulado', value: '#2d9d94' },
-  { name: 'Azul', value: '#4a90e2' },
-  { name: 'Índigo', value: '#6c5ce7' },
-  { name: 'Violeta', value: '#9b59b6' },
-  { name: 'Rosa', value: '#e0538b' },
-  { name: 'Gris', value: '#8a8a88' },
+  { nameKey: 'accent.red', value: '#db4c3f' },
+  { nameKey: 'accent.orange', value: '#e58b2e' },
+  { nameKey: 'accent.yellow', value: '#c9a227' },
+  { nameKey: 'accent.green', value: '#4a9c5d' },
+  { nameKey: 'accent.teal', value: '#2d9d94' },
+  { nameKey: 'accent.blue', value: '#4a90e2' },
+  { nameKey: 'accent.indigo', value: '#6c5ce7' },
+  { nameKey: 'accent.violet', value: '#9b59b6' },
+  { nameKey: 'accent.pink', value: '#e0538b' },
+  { nameKey: 'accent.gray', value: '#8a8a88' },
 ]
 
 const DEFAULT_ACCENT = ACCENT_COLORS[0].value

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
+  import { _ } from 'svelte-i18n'
   import { GetTasks, RefreshNow, OpenURL, ListProviders, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main } from '../../wailsjs/go/models'
@@ -9,10 +10,11 @@
 
   type Filter = 'all' | 'issue' | 'pr' | 'mention'
 
-  const typeLabels: Record<string, string> = {
-    issue: 'Issue',
-    pr: 'PR',
-    mention: 'Mención',
+  let typeLabels: Record<string, string>
+  $: typeLabels = {
+    issue: $_('tasks.typeIssue'),
+    pr: $_('tasks.typePr'),
+    mention: $_('tasks.typeMention'),
   }
 
   let tasks: providers.TaskItem[] = []
@@ -43,6 +45,10 @@
 
   let mineOnly = false
   let starredOnly = lockToStarred
+  // Seguimiento only: a starred item stays starred once closed (see
+  // starred.ts), but clutters the list otherwise — hidden by default,
+  // this brings closed items back so the user can still find them.
+  let showClosed = false
 
   const VIEW_MODE_KEY = 'koalmine:viewMode'
   function loadViewMode(): 'list' | 'table' {
@@ -66,16 +72,16 @@
     const date = new Date(iso)
     if (isNaN(date.getTime())) return ''
     const minutes = Math.round((Date.now() - date.getTime()) / 60000)
-    if (minutes < 1) return 'ahora'
-    if (minutes < 60) return `hace ${minutes} min`
+    if (minutes < 1) return $_('tasks.relativeNow')
+    if (minutes < 60) return $_('tasks.relativeMinutes', { values: { n: minutes } })
     const hours = Math.round(minutes / 60)
-    if (hours < 24) return `hace ${hours} h`
+    if (hours < 24) return $_('tasks.relativeHours', { values: { n: hours } })
     const days = Math.round(hours / 24)
-    if (days < 30) return `hace ${days} d`
+    if (days < 30) return $_('tasks.relativeDays', { values: { n: days } })
     const months = Math.round(days / 30)
-    if (months < 12) return `hace ${months} mes${months === 1 ? '' : 'es'}`
+    if (months < 12) return $_(months === 1 ? 'tasks.relativeMonth' : 'tasks.relativeMonths', { values: { n: months } })
     const years = Math.round(months / 12)
-    return `hace ${years} año${years === 1 ? '' : 's'}`
+    return $_(years === 1 ? 'tasks.relativeYear' : 'tasks.relativeYears', { values: { n: years } })
   }
 
   let comments: providers.Comment[] = []
@@ -260,7 +266,7 @@
 
   async function submitForm() {
     if (!formProvider || !formProject.trim() || !formTitle.trim()) {
-      createError = 'Completá proveedor, proyecto y título.'
+      createError = $_('tasks.formValidation')
       return
     }
     creating = true
@@ -292,29 +298,30 @@
     .filter((t) => filter === 'all' || t.type === filter)
     .filter((t) => !mineOnly || t.createdByMe)
     .filter((t) => !starredOnly || t.id in $starredItems)
+    .filter((t) => !lockToStarred || showClosed || !t.closed)
 </script>
 
 <section class="tasks">
   <header>
-    <h1>{lockToStarred ? 'Seguimiento' : 'Todas las tareas'}</h1>
+    <h1>{lockToStarred ? $_('nav.watchlist') : $_('tasks.headerAll')}</h1>
     <div class="search-box">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="7" />
         <path d="m20 20-3.5-3.5" stroke-linecap="round" />
       </svg>
-      <input type="search" bind:value={searchQuery} on:input={onSearchInput} placeholder="Buscar tareas…" />
+      <input type="search" bind:value={searchQuery} on:input={onSearchInput} placeholder={$_('tasks.searchPlaceholder')} />
       {#if searchQuery}
-        <button class="clear-search" on:click={clearSearch} title="Limpiar búsqueda">×</button>
+        <button class="clear-search" on:click={clearSearch} title={$_('tasks.clearSearch')}>×</button>
       {/if}
     </div>
     <div class="header-actions">
-      <button class="new-task" on:click={openForm} disabled={enabledProviders.length === 0} title={enabledProviders.length === 0 ? 'Configurá un proveedor primero' : 'Nueva tarea'}>
+      <button class="new-task" on:click={openForm} disabled={enabledProviders.length === 0} title={enabledProviders.length === 0 ? $_('tasks.newTaskDisabledHint') : $_('tasks.newTask')}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14" stroke-linecap="round" />
         </svg>
-        Nueva tarea
+        {$_('tasks.newTask')}
       </button>
-      <button class="refresh" on:click={refresh} disabled={refreshing} title="Actualizar">
+      <button class="refresh" on:click={refresh} disabled={refreshing} title={$_('tasks.refresh')}>
         <svg
           class:spin={refreshing}
           viewBox="0 0 24 24"
@@ -327,29 +334,31 @@
           <path d="M20 11A8 8 0 0 0 6.35 6.35M4 13a8 8 0 0 0 13.65 4.65" stroke-linecap="round" />
           <path d="M4 4v6h6M20 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        {refreshing ? 'Actualizando…' : 'Actualizar'}
+        {refreshing ? $_('tasks.refreshing') : $_('tasks.refresh')}
       </button>
     </div>
   </header>
 
   <div class="tabs">
     <div class="tabs-left">
-      {#each [['all', 'Todas'], ['issue', 'Issues'], ['pr', 'PRs'], ['mention', 'Menciones']] as [value, label] (value)}
+      {#each [['all', $_('tasks.tabAll')], ['issue', $_('tasks.tabIssue')], ['pr', $_('tasks.tabPr')], ['mention', $_('tasks.tabMention')]] as [value, label] (value)}
         <button class="tab-btn" class:active={filter === value} on:click={() => (filter = value as Filter)}>{label}</button>
       {/each}
     </div>
     <div class="tabs-right">
-      <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>Creadas por mí</button>
+      <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>{$_('tasks.chipMine')}</button>
       {#if !lockToStarred}
-        <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>★ Favoritos</button>
+        <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>{$_('tasks.chipStarred')}</button>
+      {:else}
+        <button class="chip" class:active={showClosed} on:click={() => (showClosed = !showClosed)}>{$_('tasks.chipShowClosed')}</button>
       {/if}
       <div class="view-toggle">
-        <button class="view-btn" class:active={viewMode === 'list'} on:click={() => setViewMode('list')} title="Vista de lista">
+        <button class="view-btn" class:active={viewMode === 'list'} on:click={() => setViewMode('list')} title={$_('tasks.viewList')}>
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round" />
           </svg>
         </button>
-        <button class="view-btn" class:active={viewMode === 'table'} on:click={() => setViewMode('table')} title="Vista de tabla">
+        <button class="view-btn" class:active={viewMode === 'table'} on:click={() => setViewMode('table')} title={$_('tasks.viewTable')}>
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="4" width="18" height="16" rx="2" />
             <path d="M3 10h18M9 10v10" />
@@ -360,19 +369,23 @@
   </div>
 
   {#if loadError}
-    <p class="status error">No se pudieron cargar las tareas: {loadError}</p>
+    <p class="status error">{$_('tasks.loadError', { values: { error: loadError } })}</p>
   {/if}
 
   {#if searchError}
-    <p class="status error">No se pudo buscar: {searchError}</p>
+    <p class="status error">{$_('tasks.searchError', { values: { error: searchError } })}</p>
   {:else if searchResults !== null}
     <p class="search-status">
-      {#if searching}Buscando…{:else}{filtered.length} resultado{filtered.length === 1 ? '' : 's'} para “{searchQuery}”{/if}
+      {#if searching}
+        {$_('tasks.searching')}
+      {:else}
+        {$_(filtered.length === 1 ? 'tasks.searchResult' : 'tasks.searchResults', { values: { count: filtered.length, query: searchQuery } })}
+      {/if}
     </p>
   {/if}
 
   {#if !loadedOnce}
-    <p class="hint">Cargando…</p>
+    <p class="hint">{$_('tasks.loading')}</p>
   {:else if viewMode === 'list'}
     <div class="layout">
       <ul class="list-pane">
@@ -401,7 +414,7 @@
                   class="star-btn"
                   class:active={item.id in $starredItems}
                   on:click={() => toggleStar(item)}
-                  title={item.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                  title={item.id in $starredItems ? $_('tasks.starRemove') : $_('tasks.starAdd')}
                 >
                   <svg viewBox="0 0 24 24" width="15" height="15" fill={item.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
                     <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
@@ -425,10 +438,10 @@
             <thead>
               <tr>
                 <th class="th-dot"></th>
-                <th>Título</th>
-                <th>Proyecto</th>
-                <th>Estado</th>
-                <th>Actualizado</th>
+                <th>{$_('tasks.colTitle')}</th>
+                <th>{$_('tasks.colProject')}</th>
+                <th>{$_('tasks.colStatus')}</th>
+                <th>{$_('tasks.colUpdated')}</th>
                 <th class="th-star"></th>
               </tr>
             </thead>
@@ -451,7 +464,7 @@
                       class="star-btn"
                       class:active={item.id in $starredItems}
                       on:click|stopPropagation={() => toggleStar(item)}
-                      title={item.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                      title={item.id in $starredItems ? $_('tasks.starRemove') : $_('tasks.starAdd')}
                     >
                       <svg viewBox="0 0 24 24" width="15" height="15" fill={item.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
                         <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
@@ -472,21 +485,25 @@
 
 {#snippet emptyText()}
   {#if lockToStarred}
-    Todavía no marcaste ninguna tarea. Tocá la ★ en una tarea para agregarla acá.
+    {#if starredList.length > 0}
+      {$_('tasks.emptyStarredClosed')}
+    {:else}
+      {$_('tasks.emptyNoStarred')}
+    {/if}
   {:else if tasks.length === 0}
-    Todavía no hay tareas para mostrar.
+    {$_('tasks.emptyNoTasks')}
   {:else}
-    Nada en este filtro.
+    {$_('tasks.emptyNoFilterMatch')}
   {/if}
 {/snippet}
 
 {#snippet detailContent()}
   {#if showForm}
     <article class="detail">
-      <h2>Nueva tarea</h2>
+      <h2>{$_('tasks.formTitle')}</h2>
 
       <label class="form-field">
-        <span>Proveedor</span>
+        <span>{$_('tasks.formProvider')}</span>
         <select value={formProvider} on:change={onProviderChange}>
           {#each enabledProviders as p (p.name)}
             <option value={p.name}>{p.displayName}</option>
@@ -495,40 +512,40 @@
       </label>
 
       <label class="form-field">
-        <span>Proyecto{#if formProviderInfo && !showProjectDropdown} — {formProviderInfo.projectHint}{/if}</span>
+        <span>{$_('tasks.formProject')}{#if formProviderInfo && !showProjectDropdown} — {$_(formProviderInfo.projectHint)}{/if}</span>
         {#if loadingProjects}
-          <p class="hint small">Cargando proyectos…</p>
+          <p class="hint small">{$_('tasks.formProjectLoading')}</p>
         {:else if showProjectDropdown}
           <select bind:value={formProject}>
-            <option value="" disabled>Elegí un proyecto…</option>
+            <option value="" disabled>{$_('tasks.formProjectChoose')}</option>
             {#each projectOptions as opt (opt.value)}
               <option value={opt.value}>{opt.label}</option>
             {/each}
           </select>
           <button type="button" class="link-btn" on:click={() => { manualProject = true; formProject = '' }}>
-            Escribir manualmente
+            {$_('tasks.formProjectManual')}
           </button>
         {:else}
           {#if projectLoadError}
-            <p class="hint small">No se pudo cargar la lista de proyectos; escribilo manualmente.</p>
+            <p class="hint small">{$_('tasks.formProjectLoadError')}</p>
           {/if}
-          <input type="text" bind:value={formProject} placeholder={formProviderInfo?.projectHint ?? ''} />
+          <input type="text" bind:value={formProject} placeholder={formProviderInfo ? $_(formProviderInfo.projectHint) : ''} />
           {#if projectOptions.length > 0}
             <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
-              Elegir de la lista
+              {$_('tasks.formProjectFromList')}
             </button>
           {/if}
         {/if}
       </label>
 
       <label class="form-field">
-        <span>Título</span>
-        <input type="text" bind:value={formTitle} placeholder="¿Qué hay que hacer?" />
+        <span>{$_('tasks.formTitleLabel')}</span>
+        <input type="text" bind:value={formTitle} placeholder={$_('tasks.formTitlePlaceholder')} />
       </label>
 
       <label class="form-field">
-        <span>Descripción</span>
-        <textarea bind:value={formDescription} rows="6" placeholder="Detalle opcional"></textarea>
+        <span>{$_('tasks.formDescriptionLabel')}</span>
+        <textarea bind:value={formDescription} rows="6" placeholder={$_('tasks.formDescriptionPlaceholder')}></textarea>
       </label>
 
       {#if createError}
@@ -536,9 +553,9 @@
       {/if}
 
       <div class="form-actions">
-        <button on:click={closeForm} disabled={creating}>Cancelar</button>
+        <button on:click={closeForm} disabled={creating}>{$_('tasks.formCancel')}</button>
         <button class="open-external" on:click={submitForm} disabled={creating}>
-          {creating ? 'Creando…' : 'Crear tarea'}
+          {creating ? $_('tasks.formCreating') : $_('tasks.formCreate')}
         </button>
       </div>
     </article>
@@ -552,7 +569,7 @@
             class="star-btn"
             class:active={selected.id in $starredItems}
             on:click={() => toggleStar(selected!)}
-            title={selected.id in $starredItems ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+            title={selected.id in $starredItems ? $_('tasks.starRemove') : $_('tasks.starAdd')}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill={selected.id in $starredItems ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
               <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke-linejoin="round" />
@@ -567,23 +584,23 @@
         {#if selected.description}
           <pre class="description">{selected.description}</pre>
         {:else}
-          <p class="hint">Sin descripción.</p>
+          <p class="hint">{$_('tasks.detailNoDescription')}</p>
         {/if}
 
         <div class="comments">
-          <h3>Comentarios</h3>
+          <h3>{$_('tasks.detailComments')}</h3>
           {#if loadingComments}
-            <p class="hint small">Cargando comentarios…</p>
+            <p class="hint small">{$_('tasks.detailLoadingComments')}</p>
           {:else if commentsError}
-            <p class="status error">No se pudieron cargar los comentarios: {commentsError}</p>
+            <p class="status error">{$_('tasks.detailCommentsError', { values: { error: commentsError } })}</p>
           {:else if comments.length === 0}
-            <p class="hint small">Sin comentarios.</p>
+            <p class="hint small">{$_('tasks.detailNoComments')}</p>
           {:else}
             <ul class="comment-list">
               {#each comments as c, i (i)}
                 <li class="comment">
                   <div class="comment-head">
-                    <span class="comment-author">{c.author || 'Alguien'}</span>
+                    <span class="comment-author">{c.author || $_('tasks.detailSomeone')}</span>
                     <span class="comment-date">{relativeTime(c.createdAt)}</span>
                   </div>
                   <p class="comment-body">{c.body}</p>
@@ -594,7 +611,7 @@
         </div>
 
         <button class="primary open-external" on:click={() => openExternal(selected!.url)}>
-          Abrir en el navegador
+          {$_('tasks.detailOpenExternal')}
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M7 17 17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
@@ -603,7 +620,7 @@
     {/key}
   {:else}
     <div class="detail-empty">
-      <p>Seleccioná una tarea para ver el detalle.</p>
+      <p>{$_('tasks.detailSelectPrompt')}</p>
     </div>
   {/if}
 {/snippet}

@@ -24,15 +24,19 @@ const (
 // every provider.
 type TaskItem struct {
 	// ID is stable and unique within its provider; used for notification dedup.
-	ID          string   `json:"id"`
-	Provider    string   `json:"provider"`
-	Type        ItemType `json:"type"`
-	Title       string   `json:"title"`
-	URL         string   `json:"url"`
-	Project     string   `json:"project"`
-	Status      string   `json:"status"`
-	Author      string   `json:"author"`
-	Description string   `json:"description"`
+	ID       string   `json:"id"`
+	Provider string   `json:"provider"`
+	Type     ItemType `json:"type"`
+	Title    string   `json:"title"`
+	URL      string   `json:"url"`
+	Project  string   `json:"project"`
+	Status   string   `json:"status"`
+	// Closed reports whether the item is in a terminal state (closed issue,
+	// closed or merged PR/MR) — used to drop it from views that only want
+	// actionable items, e.g. Seguimiento's default (non-search) list.
+	Closed      bool   `json:"closed"`
+	Author      string `json:"author"`
+	Description string `json:"description"`
 	// CreatedByMe reports whether the authenticated user is this item's
 	// author/reporter — a best-effort signal computed by comparing the
 	// provider's own identity for the item against the current user, not a
@@ -54,7 +58,10 @@ const (
 // URL, API key), so the settings UI can render a form for it generically
 // instead of every provider needing bespoke UI.
 type ConfigField struct {
-	Key         string    `json:"key"`
+	Key string `json:"key"`
+	// Label is an i18n message key (under "provider.field.*" in the
+	// frontend's locale files, e.g. "provider.field.redmine.baseUrl"), not
+	// display text — the frontend resolves it in the user's language.
 	Label       string    `json:"label"`
 	Kind        FieldKind `json:"kind"`
 	Placeholder string    `json:"placeholder"`
@@ -108,8 +115,10 @@ type Provider interface {
 	// FetchItems returns the caller's current assigned issues/work items,
 	// PRs/MRs where they're reviewer, and mentions.
 	FetchItems(ctx context.Context, cfg Config) ([]TaskItem, error)
-	// ProjectHint describes, for the "new task" form, what shape this
-	// provider expects CreateItemInput.Project to be in (e.g. "owner/repo").
+	// ProjectHint is an i18n message key (under "provider.hint.*") for text
+	// describing, in the "new task" form, what shape this provider expects
+	// CreateItemInput.Project to be in (e.g. "owner/repo") — not display
+	// text itself, same convention as ConfigField.Label.
 	ProjectHint() string
 	// ListProjects returns the projects/repos the user can create a task in,
 	// for the "new task" form's dropdown. May return a short or capped list

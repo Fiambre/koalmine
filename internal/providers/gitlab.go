@@ -35,13 +35,13 @@ func (p *gitlabProvider) DisplayName() string { return "GitLab" }
 
 func (p *gitlabProvider) ConfigFields() []ConfigField {
 	return []ConfigField{
-		{Key: "base_url", Label: "URL de la instancia (vacío = gitlab.com)", Kind: FieldURL, Placeholder: "https://gitlab.miempresa.com"},
-		{Key: "token", Label: "Personal Access Token", Kind: FieldSecret, Required: true},
+		{Key: "base_url", Label: "provider.field.gitlab.baseUrl", Kind: FieldURL, Placeholder: "https://gitlab.miempresa.com"},
+		{Key: "token", Label: "provider.field.gitlab.token", Kind: FieldSecret, Required: true},
 	}
 }
 
 func (p *gitlabProvider) ProjectHint() string {
-	return "namespace/proyecto o ID numérico (ej: grupo/proyecto)"
+	return "provider.hint.gitlab"
 }
 
 func (p *gitlabProvider) TestConnection(ctx context.Context, cfg Config) error {
@@ -394,13 +394,16 @@ func gitlabToTaskItem(it gitlabItem, itemType ItemType) TaskItem {
 		// GitLab's API, so the item type must be part of the key —
 		// otherwise an issue and an MR that happen to share a numeric
 		// ID would collide.
-		ID:          fmt.Sprintf("gitlab:%s:%d", itemType, it.ID),
-		Provider:    "gitlab",
-		Type:        itemType,
-		Title:       it.Title,
-		URL:         it.WebURL,
-		Project:     projectFromReference(it.References.Full),
-		Status:      it.State,
+		ID:       fmt.Sprintf("gitlab:%s:%d", itemType, it.ID),
+		Provider: "gitlab",
+		Type:     itemType,
+		Title:    it.Title,
+		URL:      it.WebURL,
+		Project:  projectFromReference(it.References.Full),
+		Status:   it.State,
+		// MRs also have "merged"/"locked" states beyond "opened"/"closed" —
+		// anything other than "opened" is no longer actionable.
+		Closed:      it.State != "opened",
 		Author:      it.Author.Username,
 		Description: it.Description,
 		UpdatedAt:   updatedAt,

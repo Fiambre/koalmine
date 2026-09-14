@@ -30,12 +30,12 @@ func (p *githubProvider) DisplayName() string { return "GitHub" }
 
 func (p *githubProvider) ConfigFields() []ConfigField {
 	return []ConfigField{
-		{Key: "token", Label: "Personal Access Token", Kind: FieldSecret, Required: true},
+		{Key: "token", Label: "provider.field.github.token", Kind: FieldSecret, Required: true},
 	}
 }
 
 func (p *githubProvider) ProjectHint() string {
-	return "owner/repo (ej: octocat/Hello-World)"
+	return "provider.hint.github"
 }
 
 func (p *githubProvider) TestConnection(ctx context.Context, cfg Config) error {
@@ -372,6 +372,7 @@ func githubToTaskItem(issue githubIssue, itemType ItemType) TaskItem {
 		URL:         issue.HTMLURL,
 		Project:     repoNameFromURL(issue.RepositoryURL),
 		Status:      issue.State,
+		Closed:      issue.State == "closed",
 		Author:      issue.User.Login,
 		Description: issue.Body,
 		UpdatedAt:   updatedAt,

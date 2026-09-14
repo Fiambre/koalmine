@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
+  import { _ } from 'svelte-i18n'
   import {
     ListProviders,
     SaveProviderConfig,
@@ -14,6 +15,10 @@
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { main, updater } from '../../wailsjs/go/models'
   import { ACCENT_COLORS, loadAccent, saveAccent } from './theme'
+  import { SUPPORTED_LOCALES, setLocale, type Locale } from './i18n'
+  import { locale } from 'svelte-i18n'
+
+  const LOCALE_LABELS: Record<Locale, string> = { en: 'English', es: 'Español' }
 
   type Status = { kind: 'idle' | 'testing' | 'ok' | 'error' | 'saving' | 'saved'; message?: string }
 
@@ -78,8 +83,8 @@
       const info = await CheckForUpdateNow()
       updateInfo = info
       checkStatus = info.available
-        ? { kind: 'ok', message: `Versión ${info.version} disponible.` }
-        : { kind: 'ok', message: 'Ya tenés la última versión.' }
+        ? { kind: 'ok', message: $_('settings.versionAvailable', { values: { version: info.version } }) }
+        : { kind: 'ok', message: $_('settings.versionUpToDate') }
     } catch (e) {
       checkStatus = { kind: 'error', message: String(e) }
     }
@@ -101,7 +106,7 @@
       await SetAutostartEnabled(autostart)
       autostartStatus = {
         kind: 'saved',
-        message: autostart ? 'Se iniciará junto con el sistema.' : 'Ya no se inicia con el sistema.',
+        message: autostart ? $_('settings.autostartEnabled') : $_('settings.autostartDisabled'),
       }
     } catch (e) {
       autostart = !autostart
@@ -113,7 +118,7 @@
     statusByProvider[p.name] = { kind: 'testing' }
     try {
       await TestConnection(p.name, drafts[p.name] ?? {})
-      statusByProvider[p.name] = { kind: 'ok', message: 'Conexión exitosa.' }
+      statusByProvider[p.name] = { kind: 'ok', message: $_('settings.connectionOk') }
     } catch (e) {
       statusByProvider[p.name] = { kind: 'error', message: String(e) }
     }
@@ -124,7 +129,7 @@
     try {
       await SaveProviderConfig(p.name, enabledDrafts[p.name] ?? false, drafts[p.name] ?? {})
       await load()
-      statusByProvider[p.name] = { kind: 'saved', message: 'Guardado.' }
+      statusByProvider[p.name] = { kind: 'saved', message: $_('settings.saved') }
     } catch (e) {
       statusByProvider[p.name] = { kind: 'error', message: String(e) }
     }
@@ -133,21 +138,21 @@
 
 <section class="settings">
   {#if loading}
-    <p class="hint">Cargando…</p>
+    <p class="hint">{$_('tasks.loading')}</p>
   {:else if loadError}
-    <p class="status error">No se pudo cargar la configuración: {loadError}</p>
+    <p class="status error">{$_('settings.loadError', { values: { error: loadError } })}</p>
   {:else}
     <article class="provider-card">
-      <h2 class="card-title">Apariencia</h2>
-      <p class="hint small">Color de acento</p>
+      <h2 class="card-title">{$_('settings.appearanceTitle')}</h2>
+      <p class="hint small">{$_('settings.accentColor')}</p>
       <div class="swatches">
         {#each ACCENT_COLORS as color (color.value)}
           <button
             class="swatch"
             class:selected={selectedAccent === color.value}
             style="background: {color.value}"
-            title={color.name}
-            aria-label={color.name}
+            title={$_(color.nameKey)}
+            aria-label={$_(color.nameKey)}
             on:click={() => selectAccent(color.value)}
           >
             {#if selectedAccent === color.value}
@@ -158,12 +163,21 @@
           </button>
         {/each}
       </div>
+
+      <p class="hint small language-label">{$_('settings.languageTitle')}</p>
+      <div class="lang-toggle">
+        {#each SUPPORTED_LOCALES as code (code)}
+          <button class="lang-btn" class:active={$locale === code} on:click={() => setLocale(code)}>
+            {LOCALE_LABELS[code]}
+          </button>
+        {/each}
+      </div>
     </article>
 
     <article class="provider-card">
       <label class="enable-toggle">
         <input type="checkbox" bind:checked={autostart} on:change={toggleAutostart} disabled={autostartStatus.kind === 'saving'} />
-        <strong>Iniciar con el sistema</strong>
+        <strong>{$_('settings.autostartLabel')}</strong>
       </label>
       {#if autostartStatus.kind === 'saved'}
         <span class="status ok">{autostartStatus.message}</span>
@@ -174,9 +188,9 @@
 
     <article class="provider-card">
       <div class="version-row">
-        <p class="version-line">Versión actual: <strong>{appVersion}</strong></p>
+        <p class="version-line">{$_('settings.versionCurrent', { values: { version: appVersion } })}</p>
         <button on:click={checkNow} disabled={checkStatus.kind === 'testing'}>
-          {checkStatus.kind === 'testing' ? 'Buscando…' : 'Buscar actualizaciones'}
+          {checkStatus.kind === 'testing' ? $_('settings.versionChecking') : $_('settings.versionCheck')}
         </button>
       </div>
       {#if checkStatus.kind === 'error'}
@@ -186,9 +200,9 @@
       {/if}
       {#if updateInfo?.available}
         <p class="update-banner">
-          Hay una versión nueva disponible: <strong>{updateInfo.version}</strong>
+          {$_('settings.versionNewBanner', { values: { version: updateInfo.version } })}
           <button class="primary" on:click={applyUpdate} disabled={updateStatus.kind === 'saving'}>
-            {updateStatus.kind === 'saving' ? 'Actualizando…' : 'Actualizar ahora'}
+            {updateStatus.kind === 'saving' ? $_('settings.versionUpdating') : $_('settings.versionUpdateNow')}
           </button>
         </p>
         {#if updateStatus.kind === 'error'}
@@ -197,7 +211,7 @@
       {/if}
     </article>
 
-    <h2>Proveedores</h2>
+    <h2>{$_('settings.providersTitle')}</h2>
 
     {#each providerList as p (p.name)}
       <article class="provider-card">
@@ -211,12 +225,12 @@
         <div class="fields">
           {#each p.fields as field (field.key)}
             <label class="field">
-              <span>{field.label}{field.required ? ' *' : ''}</span>
+              <span>{$_(field.label)}{field.required ? ' *' : ''}</span>
               {#if field.kind === 'secret'}
                 <input
                   type="password"
                   autocomplete="off"
-                  placeholder={p.secretsSet[field.key] ? '•••••••• (sin cambios)' : field.placeholder}
+                  placeholder={p.secretsSet[field.key] ? $_('settings.secretUnchanged') : field.placeholder}
                   bind:value={drafts[p.name][field.key]}
                 />
               {:else}
@@ -233,10 +247,10 @@
 
         <footer>
           <button on:click={() => testConnection(p)} disabled={statusByProvider[p.name]?.kind === 'testing'}>
-            {statusByProvider[p.name]?.kind === 'testing' ? 'Probando…' : 'Probar conexión'}
+            {statusByProvider[p.name]?.kind === 'testing' ? $_('settings.testing') : $_('settings.testConnection')}
           </button>
           <button class="primary" on:click={() => save(p)} disabled={statusByProvider[p.name]?.kind === 'saving'}>
-            {statusByProvider[p.name]?.kind === 'saving' ? 'Guardando…' : 'Guardar'}
+            {statusByProvider[p.name]?.kind === 'saving' ? $_('settings.saving') : $_('settings.save')}
           </button>
           {#if statusByProvider[p.name]?.kind === 'ok' || statusByProvider[p.name]?.kind === 'saved'}
             <span class="status ok">{statusByProvider[p.name]?.message}</span>
@@ -328,6 +342,37 @@
 
   .swatch.selected {
     box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--text-muted);
+  }
+
+  .language-label {
+    margin-top: 1rem;
+  }
+
+  .lang-toggle {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .lang-btn {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.8rem;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.85rem;
+  }
+
+  .lang-btn:hover {
+    color: var(--text);
+  }
+
+  .lang-btn.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
   }
 
   .enable-toggle {

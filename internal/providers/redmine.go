@@ -33,13 +33,13 @@ func (p *redmineProvider) DisplayName() string { return "Redmine" }
 
 func (p *redmineProvider) ConfigFields() []ConfigField {
 	return []ConfigField{
-		{Key: "base_url", Label: "URL del servidor", Kind: FieldURL, Placeholder: "https://redmine.miempresa.com", Required: true},
-		{Key: "api_key", Label: "API Key", Kind: FieldSecret, Required: true},
+		{Key: "base_url", Label: "provider.field.redmine.baseUrl", Kind: FieldURL, Placeholder: "https://redmine.miempresa.com", Required: true},
+		{Key: "api_key", Label: "provider.field.redmine.apiKey", Kind: FieldSecret, Required: true},
 	}
 }
 
 func (p *redmineProvider) ProjectHint() string {
-	return "Identificador del proyecto en Redmine (ej: mi-proyecto)"
+	return "provider.hint.redmine"
 }
 
 func (p *redmineProvider) TestConnection(ctx context.Context, cfg Config) error {
@@ -88,7 +88,8 @@ func (p *redmineProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskIte
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
 	items := make([]TaskItem, 0, len(parsed.Issues))
 	for _, issue := range parsed.Issues {
-		item := redmineToTaskItem(issue, baseURL)
+		// status_id=open above guarantees every issue here is open.
+		item := redmineToTaskItem(issue, baseURL, false)
 		item.CreatedByMe = userID != 0 && issue.Author.ID == userID
 		items = append(items, item)
 	}
@@ -199,9 +200,11 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 	// an enrichment step.
 	var full map[int]redmineIssue
 	var userID int
+	var closedIDs map[int]bool
 	if len(issueIDs) > 0 {
 		full, _ = p.fetchIssuesByIDs(ctx, cfg, issueIDs)
 		userID, _ = p.currentUserID(ctx, cfg)
+		closedIDs, _ = p.closedStatusIDs(ctx, cfg)
 	}
 
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
@@ -211,7 +214,7 @@ func (p *redmineProvider) SearchItems(ctx context.Context, cfg Config, query str
 			continue
 		}
 		if issue, ok := full[r.ID]; ok {
-			item := redmineToTaskItem(issue, baseURL)
+			item := redmineToTaskItem(issue, baseURL, closedIDs[issue.Status.ID])
 			item.CreatedByMe = userID != 0 && issue.Author.ID == userID
 			items = append(items, item)
 			continue
@@ -275,8 +278,12 @@ func (p *redmineProvider) fetchIssueByID(ctx context.Context, cfg Config, id int
 		return TaskItem{}, false, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
+	// Best-effort: if this fails, Closed just stays false rather than
+	// failing the whole lookup over a secondary field.
+	closedIDs, _ := p.closedStatusIDs(ctx, cfg)
+
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
-	return redmineToTaskItem(parsed.Issue, baseURL), true, nil
+	return redmineToTaskItem(parsed.Issue, baseURL, closedIDs[parsed.Issue.Status.ID]), true, nil
 }
 
 // fetchIssuesByIDs fetches full issue data for a batch of IDs in one
@@ -435,7 +442,7 @@ func (p *redmineProvider) CreateItem(ctx context.Context, cfg Config, input Crea
 		return TaskItem{}, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
-	item := redmineToTaskItem(parsed.Issue, strings.TrimRight(cfg["base_url"], "/"))
+	item := redmineToTaskItem(parsed.Issue, strings.TrimRight(cfg["base_url"], "/"), false)
 	item.CreatedByMe = true
 	return item, nil
 }
@@ -467,7 +474,7 @@ func (p *redmineProvider) currentUserID(ctx context.Context, cfg Config) (int, e
 	return parsed.User.ID, nil
 }
 
-func redmineToTaskItem(issue redmineIssue, baseURL string) TaskItem {
+func redmineToTaskItem(issue redmineIssue, baseURL string, closed bool) TaskItem {
 	updatedAt, _ := time.Parse(time.RFC3339, issue.UpdatedOn)
 	return TaskItem{
 		ID:          fmt.Sprintf("redmine:%d", issue.ID),
@@ -477,10 +484,51 @@ func redmineToTaskItem(issue redmineIssue, baseURL string) TaskItem {
 		URL:         fmt.Sprintf("%s/issues/%d", baseURL, issue.ID),
 		Project:     issue.Project.Name,
 		Status:      issue.Status.Name,
+		Closed:      closed,
 		Author:      issue.Author.Name,
 		Description: issue.Description,
 		UpdatedAt:   updatedAt,
 	}
+}
+
+// closedStatusIDs fetches Redmine's configured issue statuses and returns
+// the set of status IDs marked is_closed=true. Needed to tell whether an
+// issue reached outside FetchItems's status_id=open filter (a search hit,
+// or a starred item's refresh) is actually closed — Status.Name alone
+// isn't reliable since status names are admin-configurable per instance.
+func (p *redmineProvider) closedStatusIDs(ctx context.Context, cfg Config) (map[int]bool, error) {
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/issue_statuses.json", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		IssueStatuses []struct {
+			ID       int  `json:"id"`
+			IsClosed bool `json:"is_closed"`
+		} `json:"issue_statuses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	closed := make(map[int]bool, len(parsed.IssueStatuses))
+	for _, s := range parsed.IssueStatuses {
+		if s.IsClosed {
+			closed[s.ID] = true
+		}
+	}
+	return closed, nil
 }
 
 func (p *redmineProvider) newRequest(ctx context.Context, cfg Config, method, path string, body io.Reader) (*http.Request, error) {
@@ -517,6 +565,7 @@ type redmineIssue struct {
 		Name string `json:"name"`
 	} `json:"project"`
 	Status struct {
+		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"status"`
 	Author struct {

@@ -142,16 +142,17 @@ export namespace providers {
 	    url: string;
 	    project: string;
 	    status: string;
+	    closed: boolean;
 	    author: string;
 	    description: string;
 	    createdByMe: boolean;
 	    // Go type: time
 	    updatedAt: any;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new TaskItem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -161,6 +162,7 @@ export namespace providers {
 	        this.url = source["url"];
 	        this.project = source["project"];
 	        this.status = source["status"];
+	        this.closed = source["closed"];
 	        this.author = source["author"];
 	        this.description = source["description"];
 	        this.createdByMe = source["createdByMe"];
