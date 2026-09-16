@@ -232,6 +232,33 @@ export namespace providers {
 
 }
 
+export namespace store {
+
+	export class Panel {
+	    id: string;
+	    name: string;
+	    integrationId: string;
+	    project: string;
+	    type: string;
+	    status: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Panel(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.integrationId = source["integrationId"];
+	        this.project = source["project"];
+	        this.type = source["type"];
+	        this.status = source["status"];
+	    }
+	}
+
+}
+
 export namespace updater {
 	
 	export class Info {

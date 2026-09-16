@@ -59,6 +59,32 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 }
 
+func TestSaveThenLoadRoundTripsPanels(t *testing.T) {
+	withTempConfigDir(t)
+
+	cfg := Config{
+		Panels: []Panel{
+			{ID: "panel-1", Name: "Proyecto X abiertas", IntegrationID: "redmine", Project: "proyecto-x", Status: "open"},
+		},
+		PollIntervalMinutes: defaultPollIntervalMinutes,
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Panels) != 1 {
+		t.Fatalf("expected 1 panel, got %+v", loaded.Panels)
+	}
+	panel := loaded.Panels[0]
+	if panel.Name != "Proyecto X abiertas" || panel.IntegrationID != "redmine" || panel.Project != "proyecto-x" || panel.Status != "open" {
+		t.Errorf("unexpected panel after round-trip: %+v", panel)
+	}
+}
+
 // TestLoadMigratesLegacyProvidersShape uses the exact shape a real
 // pre-multi-integration config.json had (one slot per provider type, keyed
 // by name) to verify Load() transparently upgrades it: each old entry

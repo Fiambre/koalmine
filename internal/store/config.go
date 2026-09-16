@@ -26,10 +26,24 @@ type Integration struct {
 	Values  map[string]string `json:"values"`
 }
 
+// Panel is a user-defined, filtered view of tasks pinned to the sidebar
+// (e.g. "only open issues in project X"). Each field is a filter dimension;
+// an empty value means "no restriction" on that dimension.
+type Panel struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	IntegrationID string `json:"integrationId,omitempty"`
+	Project       string `json:"project,omitempty"`
+	Type          string `json:"type,omitempty"`
+	// Status is "open", "closed", or "" (both).
+	Status string `json:"status,omitempty"`
+}
+
 // Config is Koalmine's persisted, non-sensitive settings.
 type Config struct {
 	Integrations        []Integration `json:"integrations"`
 	PollIntervalMinutes int           `json:"pollIntervalMinutes"`
+	Panels              []Panel       `json:"panels"`
 }
 
 // IntegrationByID returns the integration with the given ID, if any. A
@@ -71,6 +85,13 @@ func NewIntegrationID(providerType string) string {
 	return providerType + "-" + hex.EncodeToString(buf)
 }
 
+// NewPanelID generates a fresh, unique ID for a new panel, e.g. "panel-a1b2c3d4".
+func NewPanelID() string {
+	buf := make([]byte, 4)
+	_, _ = rand.Read(buf) // crypto/rand.Read never fails on supported platforms
+	return "panel-" + hex.EncodeToString(buf)
+}
+
 // configDir is overridden in tests to avoid touching the real user config directory.
 var configDir = defaultConfigDir
 
@@ -94,6 +115,7 @@ func newConfig() Config {
 	return Config{
 		Integrations:        []Integration{},
 		PollIntervalMinutes: defaultPollIntervalMinutes,
+		Panels:              []Panel{},
 	}
 }
 
@@ -122,6 +144,9 @@ func Load() (Config, error) {
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = []Integration{}
+	}
+	if cfg.Panels == nil {
+		cfg.Panels = []Panel{}
 	}
 	if cfg.PollIntervalMinutes <= 0 {
 		cfg.PollIntervalMinutes = defaultPollIntervalMinutes

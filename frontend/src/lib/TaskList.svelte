@@ -3,10 +3,15 @@
   import { _ } from 'svelte-i18n'
   import { GetTasks, RefreshNow, OpenURL, ListIntegrations, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
-  import type { providers, main } from '../../wailsjs/go/models'
+  import type { providers, main, store } from '../../wailsjs/go/models'
   import { starredItems, toggleStar, updateStarredItem, markRefreshed, needsRefresh } from './starred'
+  import { matchesPanel } from './panels'
 
   export let lockToStarred = false
+  // A custom panel's filter (project/integration/type/status) — its own
+  // dimensions aren't re-exposed as tabs/chips (see the tabs-left guard
+  // below), but mineOnly/starredOnly still layer on top of it.
+  export let panel: store.Panel | null = null
 
   type Filter = 'all' | 'issue' | 'pr' | 'mention'
 
@@ -299,11 +304,12 @@
     .filter((t) => !mineOnly || t.createdByMe)
     .filter((t) => !starredOnly || t.id in $starredItems)
     .filter((t) => !lockToStarred || showClosed || !t.closed)
+    .filter((t) => !panel || matchesPanel(t, panel))
 </script>
 
 <section class="tasks">
   <header>
-    <h1>{lockToStarred ? $_('nav.watchlist') : $_('tasks.headerAll')}</h1>
+    <h1>{panel ? panel.name : lockToStarred ? $_('nav.watchlist') : $_('tasks.headerAll')}</h1>
     <div class="search-box">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="7" />
@@ -341,9 +347,11 @@
 
   <div class="tabs">
     <div class="tabs-left">
-      {#each [['all', $_('tasks.tabAll')], ['issue', $_('tasks.tabIssue')], ['pr', $_('tasks.tabPr')], ['mention', $_('tasks.tabMention')]] as [value, label] (value)}
-        <button class="tab-btn" class:active={filter === value} on:click={() => (filter = value as Filter)}>{label}</button>
-      {/each}
+      {#if !panel?.type}
+        {#each [['all', $_('tasks.tabAll')], ['issue', $_('tasks.tabIssue')], ['pr', $_('tasks.tabPr')], ['mention', $_('tasks.tabMention')]] as [value, label] (value)}
+          <button class="tab-btn" class:active={filter === value} on:click={() => (filter = value as Filter)}>{label}</button>
+        {/each}
+      {/if}
     </div>
     <div class="tabs-right">
       <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>{$_('tasks.chipMine')}</button>

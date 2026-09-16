@@ -694,3 +694,68 @@ func (a *App) SetPollIntervalMinutes(minutes int) error {
 	cfg.PollIntervalMinutes = minutes
 	return store.Save(cfg)
 }
+
+// ListPanels returns the user's configured custom panels, in the order they
+// were created — the sidebar renders one nav entry per panel.
+func (a *App) ListPanels() ([]store.Panel, error) {
+	cfg, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Panels, nil
+}
+
+// SavePanel creates a new panel (when panel.ID is blank) or updates an
+// existing one (when it matches a stored panel's ID), returning the saved
+// panel with its ID set.
+func (a *App) SavePanel(panel store.Panel) (store.Panel, error) {
+	cfg, err := store.Load()
+	if err != nil {
+		return store.Panel{}, err
+	}
+
+	if panel.ID == "" {
+		panel.ID = store.NewPanelID()
+		cfg.Panels = append(cfg.Panels, panel)
+	} else {
+		idx := -1
+		for i, p := range cfg.Panels {
+			if p.ID == panel.ID {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			return store.Panel{}, fmt.Errorf("panel desconocido: %s", panel.ID)
+		}
+		cfg.Panels[idx] = panel
+	}
+
+	if err := store.Save(cfg); err != nil {
+		return store.Panel{}, err
+	}
+	return panel, nil
+}
+
+// DeletePanel removes one custom panel. A no-op if the ID isn't found
+// (already gone).
+func (a *App) DeletePanel(id string) error {
+	cfg, err := store.Load()
+	if err != nil {
+		return err
+	}
+
+	idx := -1
+	for i, p := range cfg.Panels {
+		if p.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+
+	cfg.Panels = append(cfg.Panels[:idx], cfg.Panels[idx+1:]...)
+	return store.Save(cfg)
+}

@@ -3,6 +3,7 @@
 import {updater} from '../models';
 import {main} from '../models';
 import {providers} from '../models';
+import {store} from '../models';
 
 export function ApplyUpdate():Promise<void>;
 
@@ -13,6 +14,8 @@ export function CreateIntegration(arg1:string,arg2:string,arg3:Record<string, st
 export function CreateTask(arg1:main.CreateTaskInput):Promise<providers.TaskItem>;
 
 export function DeleteIntegration(arg1:string):Promise<void>;
+
+export function DeletePanel(arg1:string):Promise<void>;
 
 export function GetAppVersion():Promise<string>;
 
@@ -28,6 +31,8 @@ export function GetUpdateStatus():Promise<updater.Info>;
 
 export function ListIntegrations():Promise<Array<main.IntegrationInfo>>;
 
+export function ListPanels():Promise<Array<store.Panel>>;
+
 export function ListProjects(arg1:string):Promise<Array<providers.ProjectOption>>;
 
 export function ListProviderTypes():Promise<Array<main.ProviderTypeInfo>>;
@@ -37,6 +42,8 @@ export function OpenURL(arg1:string):Promise<void>;
 export function RefreshNow():Promise<void>;
 
 export function RefreshTaskItem(arg1:providers.TaskItem):Promise<providers.TaskItem>;
+
+export function SavePanel(arg1:store.Panel):Promise<store.Panel>;
 
 export function SearchTasks(arg1:string):Promise<Array<providers.TaskItem>>;
 

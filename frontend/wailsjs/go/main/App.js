@@ -22,6 +22,10 @@ export function DeleteIntegration(arg1) {
   return window['go']['main']['App']['DeleteIntegration'](arg1);
 }
 
+export function DeletePanel(arg1) {
+  return window['go']['main']['App']['DeletePanel'](arg1);
+}
+
 export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
@@ -50,6 +54,10 @@ export function ListIntegrations() {
   return window['go']['main']['App']['ListIntegrations']();
 }
 
+export function ListPanels() {
+  return window['go']['main']['App']['ListPanels']();
+}
+
 export function ListProjects(arg1) {
   return window['go']['main']['App']['ListProjects'](arg1);
 }
@@ -68,6 +76,10 @@ export function RefreshNow() {
 
 export function RefreshTaskItem(arg1) {
   return window['go']['main']['App']['RefreshTaskItem'](arg1);
+}
+
+export function SavePanel(arg1) {
+  return window['go']['main']['App']['SavePanel'](arg1);
 }
 
 export function SearchTasks(arg1) {
