@@ -70,6 +70,42 @@ func TestTodoistFetchItemsMissingToken(t *testing.T) {
 	}
 }
 
+func TestTodoistFetchItemsCreatedByMe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/tasks":
+			if got := r.URL.Query().Get("project_id"); got != "p1" {
+				t.Errorf("unexpected project_id: %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					todoistTaskFixture("1", "Asignada a otra persona en el proyecto compartido", "p1", 1, nil),
+				},
+			})
+		case "/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{{"id": "p1", "name": "Inbox"}},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &todoistProvider{client: server.Client(), apiBase: server.URL}
+	items, err := p.FetchItemsCreatedByMe(context.Background(), Config{"token": "secret"}, "p1")
+	if err != nil {
+		t.Fatalf("FetchItemsCreatedByMe: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "todoist:1" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Error("expected CreatedByMe true")
+	}
+}
+
 func TestTodoistListProjects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/projects" {
@@ -269,6 +305,20 @@ func TestTodoistTestConnectionFailure(t *testing.T) {
 	p := &todoistProvider{client: server.Client(), apiBase: server.URL}
 	if err := p.TestConnection(context.Background(), Config{"token": "wrong"}); err == nil {
 		t.Error("expected TestConnection to fail on a 401 response")
+	}
+}
+
+func TestTodoistDoesNotSupportAssignedTo(t *testing.T) {
+	p := &todoistProvider{client: http.DefaultClient, apiBase: "http://example.com"}
+	if p.SupportsAssignedTo() {
+		t.Error("expected SupportsAssignedTo to be false")
+	}
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "alguien", ""); err == nil {
+		t.Error("expected FetchItemsAssignedTo to error")
+	}
+	options, err := p.ListAssignableUsers(context.Background(), Config{"token": "secret"}, "algún-proyecto")
+	if err != nil || options != nil {
+		t.Errorf("expected ListAssignableUsers to return (nil, nil), got (%+v, %v)", options, err)
 	}
 }
 

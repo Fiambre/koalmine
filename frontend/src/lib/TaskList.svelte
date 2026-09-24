@@ -1,17 +1,68 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { _ } from 'svelte-i18n'
-  import { GetTasks, RefreshNow, OpenURL, ListIntegrations, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
+  import { GetTasks, GetPanelAssignedTasks, GetPanelCreatedByMeTasks, RefreshNow, OpenURL, ListIntegrations, CreateTask, SearchTasks, ListProjects, GetComments, RefreshTaskItem } from '../../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
   import type { providers, main, store } from '../../wailsjs/go/models'
   import { starredItems, toggleStar, updateStarredItem, markRefreshed, needsRefresh } from './starred'
-  import { matchesPanel } from './panels'
+  import { matchesPanel, matchesPanelFilters } from './panels'
 
   export let lockToStarred = false
   // A custom panel's filter (project/integration/type/status) — its own
   // dimensions aren't re-exposed as tabs/chips (see the tabs-left guard
   // below), but mineOnly/starredOnly still layer on top of it.
   export let panel: store.Panel | null = null
+
+  // A panel with its own "assigned to" filter is outside the poller's
+  // "assigned to me" snapshot (see panels.ts's matchesPanel), so it gets its
+  // items from a dedicated fetch instead of the shared tasks/tasks:updated
+  // flow below — see loadAssignedTasks.
+  $: usesAssignedFetch = !!panel?.assignedTo
+  let assignedTasks: providers.TaskItem[] = []
+  let assignedLoading = false
+  let assignedError = ''
+
+  async function loadAssignedTasks() {
+    if (!panel) return
+    assignedLoading = true
+    assignedError = ''
+    try {
+      const items = (await GetPanelAssignedTasks(panel)) ?? []
+      assignedTasks = items.filter((t) => matchesPanelFilters(t, panel!))
+    } catch (e) {
+      assignedError = String(e)
+      assignedTasks = []
+    } finally {
+      assignedLoading = false
+      loadedOnce = true
+    }
+  }
+
+  // A panel with its own "created by me" filter is also outside the
+  // poller's snapshot (see panels.ts's matchesPanel) — same reasoning as
+  // usesAssignedFetch above, via its own dedicated fetch. If a panel somehow
+  // has both assignedTo and createdByMe set, assignedTo wins (checked first)
+  // since the panel form doesn't offer a way to combine them meaningfully.
+  $: usesCreatedByMeFetch = !usesAssignedFetch && !!panel?.createdByMe
+  let createdByMeTasks: providers.TaskItem[] = []
+  let createdByMeLoading = false
+  let createdByMeError = ''
+
+  async function loadCreatedByMeTasks() {
+    if (!panel) return
+    createdByMeLoading = true
+    createdByMeError = ''
+    try {
+      const items = (await GetPanelCreatedByMeTasks(panel)) ?? []
+      createdByMeTasks = items.filter((t) => matchesPanelFilters(t, panel!))
+    } catch (e) {
+      createdByMeError = String(e)
+      createdByMeTasks = []
+    } finally {
+      createdByMeLoading = false
+      loadedOnce = true
+    }
+  }
 
   type Filter = 'all' | 'issue' | 'pr' | 'mention'
 
@@ -114,6 +165,7 @@
     loadComments(selected)
   }
 
+  $: dedicatedLoading = usesAssignedFetch ? assignedLoading : usesCreatedByMeFetch ? createdByMeLoading : refreshing
   $: enabledIntegrations = integrationList.filter((i) => i.enabled)
   $: formProviderInfo = enabledIntegrations.find((i) => i.id === formProvider) ?? null
   $: showProjectDropdown = !manualProject && !loadingProjects && projectOptions.length > 0
@@ -128,13 +180,19 @@
   }
 
   onMount(async () => {
-    EventsOn('tasks:updated', onUpdated)
-    try {
-      tasks = (await GetTasks()) ?? []
-    } catch (e) {
-      loadError = String(e)
-    } finally {
-      loadedOnce = true
+    if (usesAssignedFetch) {
+      loadAssignedTasks()
+    } else if (usesCreatedByMeFetch) {
+      loadCreatedByMeTasks()
+    } else {
+      EventsOn('tasks:updated', onUpdated)
+      try {
+        tasks = (await GetTasks()) ?? []
+      } catch (e) {
+        loadError = String(e)
+      } finally {
+        loadedOnce = true
+      }
     }
     try {
       integrationList = await ListIntegrations()
@@ -179,6 +237,14 @@
   }
 
   async function refresh() {
+    if (usesAssignedFetch) {
+      await loadAssignedTasks()
+      return
+    }
+    if (usesCreatedByMeFetch) {
+      await loadCreatedByMeTasks()
+      return
+    }
     refreshing = true
     loadError = ''
     if (lockToStarred) refreshStarred(true)
@@ -298,13 +364,22 @@
   // prefer the live copy from tasks when there is one, so title/status stay
   // fresh, but fall back to the snapshot saved at star-time otherwise.
   $: starredList = Object.values($starredItems).map((saved) => tasks.find((t) => t.id === saved.id) ?? saved)
-  $: baseList = lockToStarred ? starredList : searchResults ?? tasks
+  $: baseList = lockToStarred
+    ? starredList
+    : searchResults ?? (usesAssignedFetch ? assignedTasks : usesCreatedByMeFetch ? createdByMeTasks : tasks)
   $: filtered = baseList
     .filter((t) => filter === 'all' || t.type === filter)
     .filter((t) => !mineOnly || t.createdByMe)
     .filter((t) => !starredOnly || t.id in $starredItems)
-    .filter((t) => !lockToStarred || showClosed || !t.closed)
-    .filter((t) => !panel || matchesPanel(t, panel))
+    // Closed items are hidden by default wherever the base list can contain
+    // them (Seguimiento, and a "created by me" panel — both fetch open and
+    // closed alike, unlike every other view) until toggled back on.
+    .filter((t) => !(lockToStarred || usesCreatedByMeFetch) || showClosed || !t.closed)
+    // Items from the dedicated "assigned to" fetch are already scoped to
+    // the right panel/assignee (see loadAssignedTasks) — re-checking them
+    // against matchesPanel would wrongly drop them, since that function
+    // always rejects an assignedTo panel (see panels.ts).
+    .filter((t) => usesAssignedFetch || !panel || matchesPanel(t, panel))
 </script>
 
 <section class="tasks">
@@ -327,9 +402,9 @@
         </svg>
         {$_('tasks.newTask')}
       </button>
-      <button class="refresh" on:click={refresh} disabled={refreshing} title={$_('tasks.refresh')}>
+      <button class="refresh" on:click={refresh} disabled={dedicatedLoading} title={$_('tasks.refresh')}>
         <svg
-          class:spin={refreshing}
+          class:spin={dedicatedLoading}
           viewBox="0 0 24 24"
           width="16"
           height="16"
@@ -340,7 +415,7 @@
           <path d="M20 11A8 8 0 0 0 6.35 6.35M4 13a8 8 0 0 0 13.65 4.65" stroke-linecap="round" />
           <path d="M4 4v6h6M20 20v-6h-6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        {refreshing ? $_('tasks.refreshing') : $_('tasks.refresh')}
+        {dedicatedLoading ? $_('tasks.refreshing') : $_('tasks.refresh')}
       </button>
     </div>
   </header>
@@ -357,7 +432,8 @@
       <button class="chip" class:active={mineOnly} on:click={() => (mineOnly = !mineOnly)}>{$_('tasks.chipMine')}</button>
       {#if !lockToStarred}
         <button class="chip" class:active={starredOnly} on:click={() => (starredOnly = !starredOnly)}>{$_('tasks.chipStarred')}</button>
-      {:else}
+      {/if}
+      {#if lockToStarred || usesCreatedByMeFetch}
         <button class="chip" class:active={showClosed} on:click={() => (showClosed = !showClosed)}>{$_('tasks.chipShowClosed')}</button>
       {/if}
       <div class="view-toggle">
@@ -378,6 +454,14 @@
 
   {#if loadError}
     <p class="status error">{$_('tasks.loadError', { values: { error: loadError } })}</p>
+  {/if}
+
+  {#if usesAssignedFetch && assignedError}
+    <p class="status error">{$_('tasks.loadError', { values: { error: assignedError } })}</p>
+  {/if}
+
+  {#if usesCreatedByMeFetch && createdByMeError}
+    <p class="status error">{$_('tasks.loadError', { values: { error: createdByMeError } })}</p>
   {/if}
 
   {#if searchError}
@@ -464,7 +548,7 @@
                 >
                   <td><span class="dot {item.type}"></span></td>
                   <td class="cell-title">{item.title}</td>
-                  <td class="cell-muted">{item.project}</td>
+                  <td class="cell-muted cell-project" title={item.project}>{item.project}</td>
                   <td class="cell-muted">{item.status}</td>
                   <td class="cell-muted">{relativeTime(item.updatedAt)}</td>
                   <td>
@@ -1087,6 +1171,12 @@
   .cell-muted {
     color: var(--text-faint);
     white-space: nowrap;
+  }
+
+  .cell-project {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .table-detail {

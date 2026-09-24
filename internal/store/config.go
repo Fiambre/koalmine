@@ -37,6 +37,24 @@ type Panel struct {
 	Type          string `json:"type,omitempty"`
 	// Status is "open", "closed", or "" (both).
 	Status string `json:"status,omitempty"`
+	// AssignedTo is a provider-specific user identifier (see
+	// providers.UserOption.Value), or providers.AssignedToAll for no
+	// assignee restriction at all — empty means "assigned to me", the same
+	// scope as the main task list. When set (including AssignedToAll), the
+	// panel is populated by a dedicated fetch
+	// (providers.Provider.FetchItemsAssignedTo) instead of filtering the
+	// poller's "assigned to me" snapshot, and requires IntegrationID to be
+	// set to one specific integration.
+	AssignedTo string `json:"assignedTo,omitempty"`
+	// CreatedByMe, when true, shows only items authored by the user —
+	// open or closed — across every enabled integration, or just
+	// IntegrationID when one is chosen. Unlike AssignedTo, this needs no
+	// per-provider user identifier (every provider resolves "me" itself),
+	// so it doesn't require IntegrationID to be set. When true, the panel
+	// is populated by a dedicated fetch
+	// (providers.Provider.FetchItemsCreatedByMe) instead of filtering the
+	// poller's "assigned to me" snapshot — see GetPanelCreatedByMeTasks.
+	CreatedByMe bool `json:"createdByMe,omitempty"`
 }
 
 // Config is Koalmine's persisted, non-sensitive settings.

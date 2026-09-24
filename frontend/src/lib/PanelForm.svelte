@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import { _ } from 'svelte-i18n'
-  import { ListIntegrations, ListProjects, SavePanel, DeletePanel } from '../../wailsjs/go/main/App.js'
+  import { ListIntegrations, ListProjects, ListAssignableUsers, SavePanel, DeletePanel } from '../../wailsjs/go/main/App.js'
   import type { main, providers, store } from '../../wailsjs/go/models'
 
   // null means "create a new panel"; otherwise the panel being edited.
@@ -19,10 +19,64 @@
   let project = panel?.project ?? ''
   let type = panel?.type ?? ''
   let status = panel?.status ?? ''
+  let assignedTo = panel?.assignedTo ?? ''
+  let createdByMe = panel?.createdByMe ?? false
 
   let projectOptions: providers.ProjectOption[] = []
   let loadingProjects = false
   let manualProject = true
+
+  // "Asignado a" needs one specific integration (cross-provider user IDs
+  // don't correspond to each other) and, for a usable dropdown instead of a
+  // raw ID/username, a project — see providers.Provider.ListAssignableUsers.
+  $: selectedIntegration = integrations.find((i) => i.id === integrationId) ?? null
+  $: showAssignedToField = !!integrationId && !!selectedIntegration?.supportsAssignedTo
+
+  // The sentinel Panel.AssignedTo value meaning "every assignee, no
+  // restriction" — mirrors providers.AssignedToAll on the Go side.
+  const ASSIGNED_TO_ALL = '*'
+
+  let assignedUserOptions: providers.UserOption[] = []
+  let loadingAssignedUsers = false
+  // "A mí" and "Todos" are always valid dropdown choices regardless of
+  // project, so the dropdown starts as the default — manual entry is only
+  // the starting point when editing a panel whose saved value is a raw
+  // ID/username that isn't one of those two (it may still turn out to match
+  // a project member once options load, but there's no need to force that).
+  let manualAssignedTo = !!assignedTo && assignedTo !== ASSIGNED_TO_ALL
+  let assignedToTimer: ReturnType<typeof setTimeout> | null = null
+
+  function scheduleLoadAssignedUsers() {
+    if (assignedToTimer) clearTimeout(assignedToTimer)
+    assignedToTimer = setTimeout(loadAssignedUserOptions, 400)
+  }
+
+  async function loadAssignedUserOptions() {
+    const proj = project.trim()
+    if (!integrationId || !proj) {
+      assignedUserOptions = []
+      return
+    }
+    loadingAssignedUsers = true
+    try {
+      assignedUserOptions = (await ListAssignableUsers(integrationId, proj)) ?? []
+    } catch {
+      // "A mí"/"Todos" still work either way — only the specific-person
+      // options are lost, same as the project dropdown's own fallback.
+      assignedUserOptions = []
+    } finally {
+      loadingAssignedUsers = false
+    }
+  }
+
+  // Re-runs whenever integrationId or project changes, whether from the
+  // dropdowns above or typed manually — covers both this form's own fields
+  // changing and the initial load when editing an existing panel.
+  $: {
+    integrationId
+    project
+    scheduleLoadAssignedUsers()
+  }
 
   let saving = false
   let deleting = false
@@ -78,6 +132,11 @@
         project: project.trim(),
         type,
         status,
+        // Cleared when the field isn't showing (no integration chosen, or
+        // its provider doesn't support it) so switching away from a
+        // previously-assigned integration doesn't silently keep a stale value.
+        assignedTo: showAssignedToField ? assignedTo.trim() : '',
+        createdByMe,
       } as store.Panel)
       dispatch('saved', saved)
     } catch (e) {
@@ -170,6 +229,44 @@
       </select>
     </label>
 
+    {#if showAssignedToField}
+      <label class="form-field">
+        <span>{$_('panels.assignedToLabel')}</span>
+        {#if manualAssignedTo}
+          <input type="text" bind:value={assignedTo} placeholder={$_('panels.assignedToPlaceholder')} />
+          <button type="button" class="link-btn" on:click={() => (manualAssignedTo = false)}>
+            {$_('panels.assignedToFromList')}
+          </button>
+        {:else}
+          <select bind:value={assignedTo}>
+            <option value="">{$_('panels.assignedToMe')}</option>
+            <option value={ASSIGNED_TO_ALL}>{$_('panels.assignedToAll')}</option>
+            {#each assignedUserOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+          {#if loadingAssignedUsers}
+            <p class="hint small">{$_('panels.assignedToLoading')}</p>
+          {:else if !project.trim()}
+            <p class="hint small">{$_('panels.assignedToNeedsProject')}</p>
+          {/if}
+          <button type="button" class="link-btn" on:click={() => (manualAssignedTo = true)}>
+            {$_('panels.assignedToManual')}
+          </button>
+        {/if}
+      </label>
+    {:else if !integrationId}
+      <p class="hint small assigned-hint">{$_('panels.assignedToNeedsIntegration')}</p>
+    {/if}
+
+    <label class="form-field checkbox-field">
+      <input type="checkbox" bind:checked={createdByMe} />
+      <span>{$_('panels.createdByMeLabel')}</span>
+    </label>
+    {#if createdByMe}
+      <p class="hint small">{$_('panels.createdByMeHint')}</p>
+    {/if}
+
     {#if error}
       <p class="status error">{error}</p>
     {/if}
@@ -244,10 +341,24 @@
     border-color: var(--accent);
   }
 
+  .checkbox-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .checkbox-field input {
+    width: auto;
+  }
+
   .hint.small {
     font-size: 0.8rem;
     margin: 0;
     color: var(--text-faint);
+  }
+
+  .assigned-hint {
+    margin-bottom: 0.9rem;
   }
 
   .link-btn {

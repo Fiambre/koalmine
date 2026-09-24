@@ -64,7 +64,7 @@ func TestSaveThenLoadRoundTripsPanels(t *testing.T) {
 
 	cfg := Config{
 		Panels: []Panel{
-			{ID: "panel-1", Name: "Proyecto X abiertas", IntegrationID: "redmine", Project: "proyecto-x", Status: "open"},
+			{ID: "panel-1", Name: "Proyecto X abiertas", IntegrationID: "redmine", Project: "proyecto-x", Status: "open", AssignedTo: "42"},
 		},
 		PollIntervalMinutes: defaultPollIntervalMinutes,
 	}
@@ -80,7 +80,7 @@ func TestSaveThenLoadRoundTripsPanels(t *testing.T) {
 		t.Fatalf("expected 1 panel, got %+v", loaded.Panels)
 	}
 	panel := loaded.Panels[0]
-	if panel.Name != "Proyecto X abiertas" || panel.IntegrationID != "redmine" || panel.Project != "proyecto-x" || panel.Status != "open" {
+	if panel.Name != "Proyecto X abiertas" || panel.IntegrationID != "redmine" || panel.Project != "proyecto-x" || panel.Status != "open" || panel.AssignedTo != "42" {
 		t.Errorf("unexpected panel after round-trip: %+v", panel)
 	}
 }

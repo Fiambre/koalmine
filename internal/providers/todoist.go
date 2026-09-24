@@ -58,6 +58,20 @@ func (p *todoistProvider) ProjectHint() string {
 	return "provider.hint.todoist"
 }
 
+func (p *todoistProvider) SupportsAssignedTo() bool { return false }
+
+// FetchItemsAssignedTo is unreachable from the UI — SupportsAssignedTo
+// returns false, so the panel form never offers an "assigned to" filter for
+// a Todoist integration. Implemented only to satisfy the Provider interface.
+func (p *todoistProvider) FetchItemsAssignedTo(ctx context.Context, cfg Config, assignedTo, project string) ([]TaskItem, error) {
+	return nil, fmt.Errorf("Todoist no tiene un concepto de \"asignado a otro usuario\"")
+}
+
+// ListAssignableUsers is unreachable from the UI — see FetchItemsAssignedTo.
+func (p *todoistProvider) ListAssignableUsers(ctx context.Context, cfg Config, project string) ([]UserOption, error) {
+	return nil, nil
+}
+
 func (p *todoistProvider) TestConnection(ctx context.Context, cfg Config) error {
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/projects?limit=1", nil)
 	if err != nil {
@@ -81,6 +95,52 @@ func (p *todoistProvider) TestConnection(ctx context.Context, cfg Config) error 
 func (p *todoistProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem, error) {
 	query := "assigned to: me | !assigned"
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/tasks/filter?query="+url.QueryEscape(query)+"&limit=200", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Todoist: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Todoist respondió %s", resp.Status)
+	}
+
+	var parsed todoistTasksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Todoist: %w", err)
+	}
+
+	// Best-effort: if this fails, Project just stays blank for every item
+	// rather than failing the whole fetch over a secondary field.
+	projectNames, _ := p.fetchProjectNames(ctx, cfg)
+
+	items := make([]TaskItem, 0, len(parsed.Results))
+	for _, task := range parsed.Results {
+		items = append(items, todoistToTaskItem(task, projectNames[task.ProjectID]))
+	}
+	return items, nil
+}
+
+// FetchItemsCreatedByMe returns every active (incomplete) task in the
+// account, optionally narrowed to one project — see
+// Provider.FetchItemsCreatedByMe. Every Todoist task is implicitly "mine"
+// (see the type doc comment), so this differs from FetchItems only in
+// dropping the "assigned to: me | !assigned" restriction — a task assigned
+// to a collaborator in a shared project still counts as one I created.
+// Like SearchItems, this can't reach completed tasks: Todoist only exposes
+// those through a separate date-range endpoint, not a listable one, so
+// "ver cerradas" simply finds nothing here for this provider — a
+// documented gap, not an oversight.
+func (p *todoistProvider) FetchItemsCreatedByMe(ctx context.Context, cfg Config, project string) ([]TaskItem, error) {
+	path := "/tasks?limit=200"
+	if project != "" {
+		path += "&project_id=" + url.QueryEscape(project)
+	}
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -23,11 +23,17 @@ export function GetAutostartEnabled():Promise<boolean>;
 
 export function GetComments(arg1:providers.TaskItem):Promise<Array<providers.Comment>>;
 
+export function GetPanelAssignedTasks(arg1:store.Panel):Promise<Array<providers.TaskItem>>;
+
+export function GetPanelCreatedByMeTasks(arg1:store.Panel):Promise<Array<providers.TaskItem>>;
+
 export function GetPollIntervalMinutes():Promise<number>;
 
 export function GetTasks():Promise<Array<providers.TaskItem>>;
 
 export function GetUpdateStatus():Promise<updater.Info>;
+
+export function ListAssignableUsers(arg1:string,arg2:string):Promise<Array<providers.UserOption>>;
 
 export function ListIntegrations():Promise<Array<main.IntegrationInfo>>;
 

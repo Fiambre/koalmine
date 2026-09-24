@@ -24,9 +24,11 @@ func main() {
 
 	// If Koalmine is already running, ask it to show its window instead of
 	// starting a second tray icon and hidden window on top of it.
-	if !singleinstance.Acquire(showExistingWindow) {
+	ok, release := singleinstance.Acquire(showExistingWindow)
+	if !ok {
 		return
 	}
+	app.releaseSingleInstance = release
 
 	systray.Run(onTrayReady, onTrayExit)
 }

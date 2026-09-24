@@ -35,6 +35,11 @@ type App struct {
 	// onUpdateAvailable, set by tray.go, lets the tray menu react when a
 	// new version is found without app.go needing to know about systray.
 	onUpdateAvailable func(updater.Info)
+
+	// releaseSingleInstance, set by main.go, gives up the single-instance
+	// lock — see ApplyUpdate, which calls it right before relaunching so
+	// the new process doesn't lose a race against this one's shutdown.
+	releaseSingleInstance func()
 }
 
 // NewApp creates a new App application struct
@@ -168,6 +173,15 @@ func (a *App) ApplyUpdate() error {
 	if err := updater.Apply(a.ctx, info.DownloadURL); err != nil {
 		return err
 	}
+
+	// Give up the single-instance lock before starting the new process —
+	// otherwise its own singleinstance.Acquire can find the port still held
+	// by this about-to-exit process, defer to it instead of becoming
+	// primary, and both processes end up exiting with no window left open.
+	if a.releaseSingleInstance != nil {
+		a.releaseSingleInstance()
+	}
+
 	if err := updater.Relaunch(info.Version); err != nil {
 		return err
 	}
@@ -244,6 +258,103 @@ func (a *App) ListProjects(integrationID string) ([]providers.ProjectOption, err
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
 	return ri.provider.ListProjects(ctx, ri.config)
+}
+
+// ListAssignableUsers returns candidate users for a panel's "assigned to"
+// dropdown, scoped to one project — for the panel form.
+func (a *App) ListAssignableUsers(integrationID, project string) ([]providers.UserOption, error) {
+	ri, err := a.resolveIntegration(integrationID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return ri.provider.ListAssignableUsers(ctx, ri.config, project)
+}
+
+// GetPanelAssignedTasks fetches items assigned to panel.AssignedTo directly
+// from its integration's provider, for a panel whose "assigned to" filter
+// points at someone other than the authenticated user — those items are
+// outside the poller's "assigned to me" snapshot (see GetTasks), so they
+// can't be found by filtering it client-side the way every other panel
+// dimension is. Requires panel.IntegrationID to name one specific
+// integration: "assigned to X" isn't a meaningful cross-provider filter
+// since user identifiers don't correspond across providers.
+func (a *App) GetPanelAssignedTasks(panel store.Panel) ([]providers.TaskItem, error) {
+	if panel.AssignedTo == "" {
+		return nil, fmt.Errorf("el panel no tiene un usuario asignado configurado")
+	}
+	if panel.IntegrationID == "" {
+		return nil, fmt.Errorf("elegí una integración específica para filtrar por asignado")
+	}
+
+	ri, err := a.resolveIntegration(panel.IntegrationID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+	items, err := ri.provider.FetchItemsAssignedTo(ctx, ri.config, panel.AssignedTo, panel.Project)
+	if err != nil {
+		return nil, err
+	}
+	return store.NamespaceItems(items, ri.integration, ri.sameTypeCount), nil
+}
+
+// GetPanelCreatedByMeTasks fetches items authored by the current user
+// directly from each configured provider, for a panel with CreatedByMe set
+// — those items are outside the poller's "assigned to me" snapshot (see
+// GetTasks) and aren't restricted to currently-open items the way it is, so
+// they can't be found by filtering it client-side the way every other panel
+// dimension is. Unlike GetPanelAssignedTasks, "created by me" needs no
+// per-provider user identifier, so this loops across every enabled
+// integration (or just panel.IntegrationID, when one is chosen) instead of
+// requiring one specific integration — same pattern as SearchTasks: one
+// integration failing is logged and skipped rather than failing the whole
+// call.
+func (a *App) GetPanelCreatedByMeTasks(panel store.Panel) ([]providers.TaskItem, error) {
+	if !panel.CreatedByMe {
+		return nil, fmt.Errorf("el panel no tiene el filtro \"creado por mí\" activado")
+	}
+
+	cfg, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	var all []providers.TaskItem
+	for _, integ := range cfg.Integrations {
+		if !integ.Enabled {
+			continue
+		}
+		if panel.IntegrationID != "" && integ.ID != panel.IntegrationID {
+			continue
+		}
+
+		p, ok := providers.Get(integ.Type)
+		if !ok {
+			log.Printf("panel creado por mí: %s: tipo de proveedor desconocido: %s", integ.Name, integ.Type)
+			continue
+		}
+
+		resolved, err := store.ResolveConfig(p, integ.ID)
+		if err != nil {
+			log.Printf("panel creado por mí: %s: %v", integ.Name, err)
+			continue
+		}
+
+		items, err := p.FetchItemsCreatedByMe(a.ctx, resolved, panel.Project)
+		if err != nil {
+			log.Printf("panel creado por mí: %s: %v", integ.Name, err)
+			continue
+		}
+		all = append(all, store.NamespaceItems(items, integ, cfg.SameTypeCount(integ.Type))...)
+	}
+
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
+	return all, nil
 }
 
 // GetComments returns the comments/notes on the given task item.
@@ -375,10 +486,11 @@ func (a *App) SearchTasks(query string) ([]providers.TaskItem, error) {
 // IntegrationInfo, this carries no configuration state — it's the same for
 // everyone regardless of what they've configured.
 type ProviderTypeInfo struct {
-	Type        string                  `json:"type"`
-	DisplayName string                  `json:"displayName"`
-	Fields      []providers.ConfigField `json:"fields"`
-	ProjectHint string                  `json:"projectHint"`
+	Type               string                  `json:"type"`
+	DisplayName        string                  `json:"displayName"`
+	Fields             []providers.ConfigField `json:"fields"`
+	ProjectHint        string                  `json:"projectHint"`
+	SupportsAssignedTo bool                    `json:"supportsAssignedTo"`
 }
 
 // ListProviderTypes returns every registered connector type, for the "add
@@ -388,10 +500,11 @@ func (a *App) ListProviderTypes() []ProviderTypeInfo {
 	result := make([]ProviderTypeInfo, 0, len(list))
 	for _, p := range list {
 		result = append(result, ProviderTypeInfo{
-			Type:        p.Name(),
-			DisplayName: p.DisplayName(),
-			Fields:      p.ConfigFields(),
-			ProjectHint: p.ProjectHint(),
+			Type:               p.Name(),
+			DisplayName:        p.DisplayName(),
+			Fields:             p.ConfigFields(),
+			ProjectHint:        p.ProjectHint(),
+			SupportsAssignedTo: p.SupportsAssignedTo(),
 		})
 	}
 	return result
@@ -403,29 +516,31 @@ func (a *App) ListProviderTypes() []ProviderTypeInfo {
 // are never sent to the frontend — only whether one has been set — so
 // tokens/API keys never round-trip through the webview.
 type IntegrationInfo struct {
-	ID              string                  `json:"id"`
-	Type            string                  `json:"type"`
-	TypeDisplayName string                  `json:"typeDisplayName"`
-	Name            string                  `json:"name"`
-	Enabled         bool                    `json:"enabled"`
-	Fields          []providers.ConfigField `json:"fields"`
-	Values          map[string]string       `json:"values"`
-	SecretsSet      map[string]bool         `json:"secretsSet"`
-	ProjectHint     string                  `json:"projectHint"`
+	ID                 string                  `json:"id"`
+	Type               string                  `json:"type"`
+	TypeDisplayName    string                  `json:"typeDisplayName"`
+	Name               string                  `json:"name"`
+	Enabled            bool                    `json:"enabled"`
+	Fields             []providers.ConfigField `json:"fields"`
+	Values             map[string]string       `json:"values"`
+	SecretsSet         map[string]bool         `json:"secretsSet"`
+	ProjectHint        string                  `json:"projectHint"`
+	SupportsAssignedTo bool                    `json:"supportsAssignedTo"`
 }
 
 func integrationInfo(integ store.Integration, p providers.Provider) (IntegrationInfo, error) {
 	fields := p.ConfigFields()
 	info := IntegrationInfo{
-		ID:              integ.ID,
-		Type:            integ.Type,
-		TypeDisplayName: p.DisplayName(),
-		Name:            integ.Name,
-		Enabled:         integ.Enabled,
-		Fields:          fields,
-		Values:          map[string]string{},
-		SecretsSet:      map[string]bool{},
-		ProjectHint:     p.ProjectHint(),
+		ID:                 integ.ID,
+		Type:               integ.Type,
+		TypeDisplayName:    p.DisplayName(),
+		Name:               integ.Name,
+		Enabled:            integ.Enabled,
+		Fields:             fields,
+		Values:             map[string]string{},
+		SecretsSet:         map[string]bool{},
+		ProjectHint:        p.ProjectHint(),
+		SupportsAssignedTo: p.SupportsAssignedTo(),
 	}
 	for _, field := range fields {
 		if field.Kind == providers.FieldSecret {

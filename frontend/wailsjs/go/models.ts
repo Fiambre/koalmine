@@ -5,11 +5,11 @@ export namespace main {
 	    project: string;
 	    title: string;
 	    description: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CreateTaskInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.integration = source["integration"];
@@ -18,24 +18,36 @@ export namespace main {
 	        this.description = source["description"];
 	    }
 	}
-	export class ProviderTypeInfo {
+	export class IntegrationInfo {
+	    id: string;
 	    type: string;
-	    displayName: string;
+	    typeDisplayName: string;
+	    name: string;
+	    enabled: boolean;
 	    fields: providers.ConfigField[];
+	    values: Record<string, string>;
+	    secretsSet: Record<string, boolean>;
 	    projectHint: string;
-
+	    supportsAssignedTo: boolean;
+	
 	    static createFrom(source: any = {}) {
-	        return new ProviderTypeInfo(source);
+	        return new IntegrationInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.type = source["type"];
-	        this.displayName = source["displayName"];
+	        this.typeDisplayName = source["typeDisplayName"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
 	        this.fields = this.convertValues(source["fields"], providers.ConfigField);
+	        this.values = source["values"];
+	        this.secretsSet = source["secretsSet"];
 	        this.projectHint = source["projectHint"];
+	        this.supportsAssignedTo = source["supportsAssignedTo"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -54,34 +66,26 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class IntegrationInfo {
-	    id: string;
+	export class ProviderTypeInfo {
 	    type: string;
-	    typeDisplayName: string;
-	    name: string;
-	    enabled: boolean;
+	    displayName: string;
 	    fields: providers.ConfigField[];
-	    values: Record<string, string>;
-	    secretsSet: Record<string, boolean>;
 	    projectHint: string;
-
+	    supportsAssignedTo: boolean;
+	
 	    static createFrom(source: any = {}) {
-	        return new IntegrationInfo(source);
+	        return new ProviderTypeInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
 	        this.type = source["type"];
-	        this.typeDisplayName = source["typeDisplayName"];
-	        this.name = source["name"];
-	        this.enabled = source["enabled"];
+	        this.displayName = source["displayName"];
 	        this.fields = this.convertValues(source["fields"], providers.ConfigField);
-	        this.values = source["values"];
-	        this.secretsSet = source["secretsSet"];
 	        this.projectHint = source["projectHint"];
+	        this.supportsAssignedTo = source["supportsAssignedTo"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -189,11 +193,11 @@ export namespace providers {
 	    createdByMe: boolean;
 	    // Go type: time
 	    updatedAt: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TaskItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -229,23 +233,39 @@ export namespace providers {
 		    return a;
 		}
 	}
+	export class UserOption {
+	    value: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UserOption(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.value = source["value"];
+	        this.label = source["label"];
+	    }
+	}
 
 }
 
 export namespace store {
-
+	
 	export class Panel {
 	    id: string;
 	    name: string;
-	    integrationId: string;
-	    project: string;
-	    type: string;
-	    status: string;
-
+	    integrationId?: string;
+	    project?: string;
+	    type?: string;
+	    status?: string;
+	    assignedTo?: string;
+	    createdByMe?: boolean;
+	
 	    static createFrom(source: any = {}) {
 	        return new Panel(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -254,6 +274,8 @@ export namespace store {
 	        this.project = source["project"];
 	        this.type = source["type"];
 	        this.status = source["status"];
+	        this.assignedTo = source["assignedTo"];
+	        this.createdByMe = source["createdByMe"];
 	    }
 	}
 

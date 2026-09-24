@@ -78,6 +78,163 @@ func TestGitlabFetchItemsDedupesReviewerAndAssigned(t *testing.T) {
 	}
 }
 
+func TestGitlabFetchItemsAssignedTo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/projects/grupo/proyecto/issues":
+			if r.URL.Query().Get("assignee_username") != "otra-persona" {
+				t.Errorf("unexpected assignee_username: %s", r.URL.Query().Get("assignee_username"))
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				gitlabItemFixture(1, "Bug de otra persona", "grupo/proyecto#1"),
+			})
+		case "/projects/grupo/proyecto/merge_requests":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	items, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "otra-persona", "grupo/proyecto")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "gitlab:issue:1" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+}
+
+func TestGitlabFetchItemsAssignedToAll(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/projects/grupo/proyecto/issues":
+			if r.URL.Query().Has("assignee_username") {
+				t.Errorf("expected no assignee_username filter for AssignedToAll, got %s", r.URL.Query().Get("assignee_username"))
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				gitlabItemFixture(1, "Tarea de cualquiera", "grupo/proyecto#1"),
+			})
+		case "/projects/grupo/proyecto/merge_requests":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	items, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, AssignedToAll, "grupo/proyecto")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "gitlab:issue:1" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+}
+
+func TestGitlabFetchItemsAssignedToWithoutProject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues", "/merge_requests":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "otra-persona", ""); err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+}
+
+func TestGitlabFetchItemsAssignedToRequiresUser(t *testing.T) {
+	p := &gitlabProvider{client: http.DefaultClient, apiBase: "http://example.com"}
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "", ""); err == nil {
+		t.Error("expected an error when assignedTo is blank")
+	}
+}
+
+func TestGitlabFetchItemsCreatedByMe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "username": "rodrigo"})
+		case "/projects/grupo/proyecto/issues":
+			if r.URL.Query().Get("author_id") != "7" {
+				t.Errorf("unexpected author_id: %s", r.URL.Query().Get("author_id"))
+			}
+			if r.URL.Query().Has("state") {
+				t.Errorf("expected no state filter so closed items are included, got %s", r.URL.Query().Get("state"))
+			}
+			closed := gitlabItemFixture(1, "Un bug que cerré yo", "grupo/proyecto#1")
+			closed["state"] = "closed"
+			_ = json.NewEncoder(w).Encode([]map[string]any{closed})
+		case "/projects/grupo/proyecto/merge_requests":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	items, err := p.FetchItemsCreatedByMe(context.Background(), Config{"token": "secret"}, "grupo/proyecto")
+	if err != nil {
+		t.Fatalf("FetchItemsCreatedByMe: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "gitlab:issue:1" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Error("expected CreatedByMe true")
+	}
+	if !items[0].Closed {
+		t.Error("expected the item to be reported as closed")
+	}
+}
+
+func TestGitlabListAssignableUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/grupo/proyecto/users" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"username": "rodrigo", "name": "Rodrigo"},
+			{"username": "otra-persona", "name": "Otra Persona"},
+		})
+	}))
+	defer server.Close()
+
+	p := &gitlabProvider{client: server.Client(), apiBase: server.URL}
+	options, err := p.ListAssignableUsers(context.Background(), Config{"token": "secret"}, "grupo/proyecto")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if len(options) != 2 || options[0].Value != "rodrigo" || options[0].Label != "Rodrigo" {
+		t.Errorf("unexpected options: %+v", options)
+	}
+}
+
+func TestGitlabListAssignableUsersRequiresProject(t *testing.T) {
+	p := &gitlabProvider{client: http.DefaultClient, apiBase: "http://example.com"}
+	options, err := p.ListAssignableUsers(context.Background(), Config{"token": "secret"}, "")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if options != nil {
+		t.Errorf("expected nil options for a blank project, got %+v", options)
+	}
+}
+
 func TestGitlabListProjects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/projects" {

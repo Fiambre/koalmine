@@ -38,6 +38,8 @@ func (p *githubProvider) ProjectHint() string {
 	return "provider.hint.github"
 }
 
+func (p *githubProvider) SupportsAssignedTo() bool { return true }
+
 func (p *githubProvider) TestConnection(ctx context.Context, cfg Config) error {
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/user", nil)
 	if err != nil {
@@ -95,6 +97,101 @@ func (p *githubProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem
 		}
 	}
 	return items, nil
+}
+
+// FetchItemsAssignedTo returns open issues/PRs assigned to an arbitrary
+// GitHub login, optionally narrowed to one "owner/repo" — see
+// Provider.FetchItemsAssignedTo. Used only by custom panels.
+//
+// AssignedToAll (no assignee filter) requires project to be set: GitHub's
+// search API treats a query with no "repo:"/"org:"/"user:" qualifier as a
+// search across every public issue on GitHub, not just what this token can
+// see, which is never what a panel showing "every assignee" actually wants.
+func (p *githubProvider) FetchItemsAssignedTo(ctx context.Context, cfg Config, assignedTo, project string) ([]TaskItem, error) {
+	if assignedTo == "" {
+		return nil, fmt.Errorf("falta el usuario asignado")
+	}
+	if assignedTo == AssignedToAll && project == "" {
+		return nil, fmt.Errorf("elegí un proyecto para ver los tickets de todos los usuarios")
+	}
+
+	query := "is:open"
+	if assignedTo != AssignedToAll {
+		query += " assignee:" + assignedTo
+	}
+	if project != "" {
+		query += " repo:" + project
+	}
+	return p.search(ctx, cfg, query, ItemTypeIssue)
+}
+
+// FetchItemsCreatedByMe returns every issue/PR authored by the current
+// user, open or closed, optionally narrowed to one "owner/repo" — see
+// Provider.FetchItemsCreatedByMe. Used only by custom panels. Unlike
+// FetchItemsAssignedTo(AssignedToAll), no project is required: "author:@me"
+// already scopes the search to items the user created, so it's never the
+// GitHub-wide search FetchItemsAssignedTo has to guard against.
+func (p *githubProvider) FetchItemsCreatedByMe(ctx context.Context, cfg Config, project string) ([]TaskItem, error) {
+	query := "author:@me"
+	if project != "" {
+		query += " repo:" + project
+	}
+
+	issues, err := p.rawSearch(ctx, cfg, query)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TaskItem, 0, len(issues))
+	for _, issue := range issues {
+		itemType := ItemTypeIssue
+		if issue.PullRequest != nil {
+			itemType = ItemTypePR
+		}
+		item := githubToTaskItem(issue, itemType)
+		item.CreatedByMe = true
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// ListAssignableUsers returns the users that can be assigned an issue in the
+// given "owner/repo" — GitHub's /assignees endpoint exists specifically for
+// this (an assignee picker), and only requires read access to the repo,
+// unlike /collaborators which needs push access — see
+// Provider.ListAssignableUsers.
+func (p *githubProvider) ListAssignableUsers(ctx context.Context, cfg Config, project string) ([]UserOption, error) {
+	if project == "" {
+		return nil, nil
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, fmt.Sprintf("/repos/%s/assignees?per_page=100", project), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub respondió %s", resp.Status)
+	}
+
+	var users []struct {
+		Login string `json:"login"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitHub: %w", err)
+	}
+
+	options := make([]UserOption, 0, len(users))
+	for _, u := range users {
+		options = append(options, UserOption{Value: u.Login, Label: u.Login})
+	}
+	return options, nil
 }
 
 func (p *githubProvider) search(ctx context.Context, cfg Config, query string, itemType ItemType) ([]TaskItem, error) {

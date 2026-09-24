@@ -44,6 +44,8 @@ func (p *gitlabProvider) ProjectHint() string {
 	return "provider.hint.gitlab"
 }
 
+func (p *gitlabProvider) SupportsAssignedTo() bool { return true }
+
 func (p *gitlabProvider) TestConnection(ctx context.Context, cfg Config) error {
 	_, err := p.currentUser(ctx, cfg)
 	return err
@@ -84,6 +86,119 @@ func (p *gitlabProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem
 		}
 	}
 	return items, nil
+}
+
+// FetchItemsAssignedTo returns open issues and MRs assigned to an arbitrary
+// GitLab username (or every one of them, for AssignedToAll), optionally
+// narrowed to one project — see Provider.FetchItemsAssignedTo. Used only by
+// custom panels. Unlike FetchItems, it doesn't also cover MRs where
+// assignedTo is a requested reviewer — "assigned to" and "review requested"
+// are different concepts, and a panel filtering by assignee shouldn't
+// silently include the other.
+func (p *gitlabProvider) FetchItemsAssignedTo(ctx context.Context, cfg Config, assignedTo, project string) ([]TaskItem, error) {
+	if assignedTo == "" {
+		return nil, fmt.Errorf("falta el usuario asignado")
+	}
+
+	base := ""
+	if project != "" {
+		base = "/projects/" + url.PathEscape(project)
+	}
+	query := "state=opened&per_page=100"
+	if assignedTo != AssignedToAll {
+		query = "assignee_username=" + url.QueryEscape(assignedTo) + "&" + query
+	}
+
+	issues, err := p.list(ctx, cfg, base+"/issues?"+query, ItemTypeIssue)
+	if err != nil {
+		return nil, err
+	}
+	mrs, err := p.list(ctx, cfg, base+"/merge_requests?"+query, ItemTypePR)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TaskItem, 0, len(issues)+len(mrs))
+	items = append(items, issues...)
+	items = append(items, mrs...)
+	return items, nil
+}
+
+// FetchItemsCreatedByMe returns every issue and MR authored by the current
+// user, open or closed, optionally narrowed to one project — see
+// Provider.FetchItemsCreatedByMe. Used only by custom panels. Like
+// FetchItemsAssignedTo(AssignedToAll), no project is required: the global
+// /issues and /merge_requests endpoints are already scoped to what the
+// token can see.
+func (p *gitlabProvider) FetchItemsCreatedByMe(ctx context.Context, cfg Config, project string) ([]TaskItem, error) {
+	me, err := p.currentUser(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	base := ""
+	if project != "" {
+		base = "/projects/" + url.PathEscape(project)
+	}
+	query := fmt.Sprintf("author_id=%d&per_page=100", me.ID)
+
+	issues, err := p.list(ctx, cfg, base+"/issues?"+query, ItemTypeIssue)
+	if err != nil {
+		return nil, err
+	}
+	mrs, err := p.list(ctx, cfg, base+"/merge_requests?"+query, ItemTypePR)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TaskItem, 0, len(issues)+len(mrs))
+	for _, group := range [][]TaskItem{issues, mrs} {
+		for _, item := range group {
+			item.CreatedByMe = true
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+// ListAssignableUsers returns the given project's users, for a panel's
+// "assigned to" dropdown — GitLab's /projects/:id/users endpoint exists
+// specifically for this (an assignee-picker autocomplete) and only requires
+// read access to the project — see Provider.ListAssignableUsers.
+func (p *gitlabProvider) ListAssignableUsers(ctx context.Context, cfg Config, project string) ([]UserOption, error) {
+	if project == "" {
+		return nil, nil
+	}
+
+	path := "/projects/" + url.PathEscape(project) + "/users?per_page=100"
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a GitLab: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab respondió %s", resp.Status)
+	}
+
+	var users []struct {
+		Username string `json:"username"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de GitLab: %w", err)
+	}
+
+	options := make([]UserOption, 0, len(users))
+	for _, u := range users {
+		options = append(options, UserOption{Value: u.Username, Label: u.Name})
+	}
+	return options, nil
 }
 
 // ListProjects returns the projects the user is a member of, for the "new

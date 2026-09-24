@@ -97,6 +97,134 @@ func TestGithubListProjects(t *testing.T) {
 	}
 }
 
+func TestGithubFetchItemsAssignedTo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query().Get("q")
+		if !strings.Contains(q, "assignee:otra-persona") || !strings.Contains(q, "repo:acme/repo") {
+			t.Errorf("unexpected query: %s", q)
+		}
+		_ = json.NewEncoder(w).Encode(githubFixture(issueFixture(1, "Tarea de otra persona", false)))
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	items, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "otra-persona", "acme/repo")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Tarea de otra persona" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+}
+
+func TestGithubFetchItemsAssignedToAll(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "assignee:") {
+			t.Errorf("expected no assignee: qualifier for AssignedToAll, got query: %s", q)
+		}
+		if !strings.Contains(q, "repo:acme/repo") {
+			t.Errorf("unexpected query: %s", q)
+		}
+		_ = json.NewEncoder(w).Encode(githubFixture(issueFixture(1, "Tarea de cualquiera", false)))
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	items, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, AssignedToAll, "acme/repo")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Tarea de cualquiera" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+}
+
+func TestGithubFetchItemsCreatedByMe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query().Get("q")
+		if !strings.Contains(q, "author:@me") {
+			t.Errorf("unexpected query: %s", q)
+		}
+		if !strings.Contains(q, "repo:acme/repo") {
+			t.Errorf("unexpected query: %s", q)
+		}
+		if strings.Contains(q, "is:open") {
+			t.Errorf("expected no is:open qualifier so closed items are included, got query: %s", q)
+		}
+		closedIssue := issueFixture(1, "Una que cerré yo mismo", false)
+		closedIssue["state"] = "closed"
+		_ = json.NewEncoder(w).Encode(githubFixture(closedIssue))
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	items, err := p.FetchItemsCreatedByMe(context.Background(), Config{"token": "secret"}, "acme/repo")
+	if err != nil {
+		t.Fatalf("FetchItemsCreatedByMe: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Una que cerré yo mismo" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Error("expected CreatedByMe true")
+	}
+	if !items[0].Closed {
+		t.Error("expected the item to be reported as closed")
+	}
+}
+
+func TestGithubFetchItemsAssignedToAllRequiresProject(t *testing.T) {
+	p := &githubProvider{client: http.DefaultClient, baseURL: "http://example.com"}
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, AssignedToAll, ""); err == nil {
+		t.Error("expected an error when AssignedToAll is used without a project")
+	}
+}
+
+func TestGithubFetchItemsAssignedToRequiresUser(t *testing.T) {
+	p := &githubProvider{client: http.DefaultClient, baseURL: "http://example.com"}
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"token": "secret"}, "", ""); err == nil {
+		t.Error("expected an error when assignedTo is blank")
+	}
+}
+
+func TestGithubListAssignableUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/repo/assignees" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"login": "rodrigo"},
+			{"login": "otra-persona"},
+		})
+	}))
+	defer server.Close()
+
+	p := &githubProvider{client: server.Client(), baseURL: server.URL}
+	options, err := p.ListAssignableUsers(context.Background(), Config{"token": "secret"}, "acme/repo")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if len(options) != 2 || options[0].Value != "rodrigo" {
+		t.Errorf("unexpected options: %+v", options)
+	}
+}
+
+func TestGithubListAssignableUsersRequiresProject(t *testing.T) {
+	p := &githubProvider{client: http.DefaultClient, baseURL: "http://example.com"}
+	options, err := p.ListAssignableUsers(context.Background(), Config{"token": "secret"}, "")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if options != nil {
+		t.Errorf("expected nil options for a blank project, got %+v", options)
+	}
+}
+
 func TestGithubSearchItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

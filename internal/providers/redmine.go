@@ -42,6 +42,8 @@ func (p *redmineProvider) ProjectHint() string {
 	return "provider.hint.redmine"
 }
 
+func (p *redmineProvider) SupportsAssignedTo() bool { return true }
+
 func (p *redmineProvider) TestConnection(ctx context.Context, cfg Config) error {
 	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/users/current.json", nil)
 	if err != nil {
@@ -61,7 +63,39 @@ func (p *redmineProvider) TestConnection(ctx context.Context, cfg Config) error 
 }
 
 func (p *redmineProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskItem, error) {
-	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/issues.json?assigned_to_id=me&status_id=open&limit=100&sort=updated_on:desc", nil)
+	withAuthors, err := p.fetchAssignedIssues(ctx, cfg, "me", "")
+	if err != nil {
+		return nil, err
+	}
+	return p.resolveCreatedByMe(ctx, cfg, withAuthors), nil
+}
+
+// FetchItemsAssignedTo returns open issues assigned to an arbitrary user (or
+// every one of them, for AssignedToAll) — see Provider.FetchItemsAssignedTo.
+// Used only by custom panels, never by the main "assigned to me" poll.
+func (p *redmineProvider) FetchItemsAssignedTo(ctx context.Context, cfg Config, assignedTo, project string) ([]TaskItem, error) {
+	if assignedTo == "" {
+		return nil, fmt.Errorf("falta el usuario asignado")
+	}
+	withAuthors, err := p.fetchAssignedIssues(ctx, cfg, assignedTo, project)
+	if err != nil {
+		return nil, err
+	}
+	return p.resolveCreatedByMe(ctx, cfg, withAuthors), nil
+}
+
+// FetchItemsCreatedByMe returns every issue authored by the current user,
+// open or closed, optionally narrowed to one project — see
+// Provider.FetchItemsCreatedByMe. Used only by custom panels.
+// status_id=* is required because /issues.json only returns open issues by
+// default (same reasoning as fetchIssuesByIDs).
+func (p *redmineProvider) FetchItemsCreatedByMe(ctx context.Context, cfg Config, project string) ([]TaskItem, error) {
+	path := "/issues.json?author_id=me&status_id=*&limit=100&sort=updated_on:desc"
+	if project != "" {
+		path += "&project_id=" + url.QueryEscape(project)
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,19 +115,128 @@ func (p *redmineProvider) FetchItems(ctx context.Context, cfg Config) ([]TaskIte
 		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 
-	// Best-effort: if this fails, CreatedByMe just stays false for every
-	// item rather than failing the whole fetch over a secondary field.
-	userID, _ := p.currentUserID(ctx, cfg)
+	// Best-effort: if this fails, Closed just stays false for every item
+	// rather than failing the whole fetch over a secondary field.
+	closedIDs, _ := p.closedStatusIDs(ctx, cfg)
 
 	baseURL := strings.TrimRight(cfg["base_url"], "/")
 	items := make([]TaskItem, 0, len(parsed.Issues))
 	for _, issue := range parsed.Issues {
-		// status_id=open above guarantees every issue here is open.
-		item := redmineToTaskItem(issue, baseURL, false)
-		item.CreatedByMe = userID != 0 && issue.Author.ID == userID
+		item := redmineToTaskItem(issue, baseURL, closedIDs[issue.Status.ID])
+		item.CreatedByMe = true
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// resolveCreatedByMe stamps CreatedByMe onto each item by comparing its
+// author ID against the authenticated user. Best-effort: if the current-user
+// lookup fails, CreatedByMe just stays false for every item rather than
+// failing the whole fetch over a secondary field.
+func (p *redmineProvider) resolveCreatedByMe(ctx context.Context, cfg Config, withAuthors []taskItemWithAuthor) []TaskItem {
+	userID, _ := p.currentUserID(ctx, cfg)
+	items := make([]TaskItem, len(withAuthors))
+	for i, w := range withAuthors {
+		item := w.TaskItem
+		item.CreatedByMe = userID != 0 && w.authorID == userID
+		items[i] = item
+	}
+	return items
+}
+
+// fetchAssignedIssues is the shared query behind FetchItems (assignedTo
+// "me") and FetchItemsAssignedTo (an arbitrary user, or AssignedToAll for no
+// assignee restriction at all) — Redmine's assigned_to_id filter accepts
+// "me" or a numeric ID identically, and is simply omitted for AssignedToAll.
+func (p *redmineProvider) fetchAssignedIssues(ctx context.Context, cfg Config, assignedTo, project string) ([]taskItemWithAuthor, error) {
+	path := "/issues.json?status_id=open&limit=100&sort=updated_on:desc"
+	if assignedTo != AssignedToAll {
+		path += "&assigned_to_id=" + url.QueryEscape(assignedTo)
+	}
+	if project != "" {
+		path += "&project_id=" + url.QueryEscape(project)
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed redmineIssuesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	baseURL := strings.TrimRight(cfg["base_url"], "/")
+	items := make([]taskItemWithAuthor, 0, len(parsed.Issues))
+	for _, issue := range parsed.Issues {
+		// status_id=open above guarantees every issue here is open.
+		items = append(items, taskItemWithAuthor{
+			TaskItem: redmineToTaskItem(issue, baseURL, false),
+			authorID: issue.Author.ID,
+		})
+	}
+	return items, nil
+}
+
+// ListAssignableUsers returns project needs to be non-empty — see
+// Provider.ListAssignableUsers. Redmine's /users.json endpoint requires
+// administrator rights, but /projects/:id/memberships.json only requires
+// "view members" access on that project, so it's used instead — group
+// memberships are skipped since a group isn't a valid assigned_to_id target
+// the same way a user ID is.
+func (p *redmineProvider) ListAssignableUsers(ctx context.Context, cfg Config, project string) ([]UserOption, error) {
+	if project == "" {
+		return nil, nil
+	}
+
+	req, err := p.newRequest(ctx, cfg, http.MethodGet, fmt.Sprintf("/projects/%s/memberships.json?limit=100", url.PathEscape(project)), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+	}
+
+	var parsed struct {
+		Memberships []struct {
+			User *struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"user"`
+		} `json:"memberships"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+	}
+
+	seen := make(map[int]bool, len(parsed.Memberships))
+	options := make([]UserOption, 0, len(parsed.Memberships))
+	for _, m := range parsed.Memberships {
+		if m.User == nil || seen[m.User.ID] {
+			continue
+		}
+		seen[m.User.ID] = true
+		options = append(options, UserOption{Value: strconv.Itoa(m.User.ID), Label: m.User.Name})
+	}
+	return options, nil
 }
 
 // ListProjects returns every project the API key's user has access to, for
@@ -472,6 +615,14 @@ func (p *redmineProvider) currentUserID(ctx context.Context, cfg Config) (int, e
 		return 0, fmt.Errorf("respuesta inválida de Redmine: %w", err)
 	}
 	return parsed.User.ID, nil
+}
+
+// taskItemWithAuthor carries a Redmine issue's author ID alongside its
+// converted TaskItem, so fetchAssignedIssues's callers can compute
+// CreatedByMe without redmineIssue leaking out of this file.
+type taskItemWithAuthor struct {
+	TaskItem
+	authorID int
 }
 
 func redmineToTaskItem(issue redmineIssue, baseURL string, closed bool) TaskItem {

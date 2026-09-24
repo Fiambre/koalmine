@@ -409,6 +409,198 @@ func TestRedmineCreateItem(t *testing.T) {
 	}
 }
 
+func TestRedmineFetchItemsAssignedTo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues.json":
+			if got := r.URL.Query().Get("assigned_to_id"); got != "9" {
+				t.Errorf("unexpected assigned_to_id: %s", got)
+			}
+			if got := r.URL.Query().Get("project_id"); got != "koalmine" {
+				t.Errorf("unexpected project_id: %s", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{
+					{
+						"id":         42,
+						"subject":    "Tarea de otra persona",
+						"updated_on": "2026-09-01T10:00:00Z",
+						"project":    map[string]any{"name": "Koalmine"},
+						"status":     map[string]any{"name": "Nueva"},
+						"author":     map[string]any{"id": 9, "name": "Otra Persona"},
+					},
+				},
+			})
+		case "/users/current.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": 5}})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	items, err := p.FetchItemsAssignedTo(context.Background(), cfg, "9", "koalmine")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Tarea de otra persona" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+	if items[0].CreatedByMe {
+		t.Errorf("expected CreatedByMe false (item authored by 9, current user is 5)")
+	}
+}
+
+func TestRedmineFetchItemsAssignedToAll(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues.json":
+			if r.URL.Query().Has("assigned_to_id") {
+				t.Errorf("expected no assigned_to_id filter for AssignedToAll, got %s", r.URL.Query().Get("assigned_to_id"))
+			}
+			if got := r.URL.Query().Get("project_id"); got != "koalmine" {
+				t.Errorf("unexpected project_id: %s", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{
+					{
+						"id":         42,
+						"subject":    "Tarea de cualquiera",
+						"updated_on": "2026-09-01T10:00:00Z",
+						"project":    map[string]any{"name": "Koalmine"},
+						"status":     map[string]any{"name": "Nueva"},
+						"author":     map[string]any{"id": 9, "name": "Otra Persona"},
+					},
+				},
+			})
+		case "/users/current.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": 5}})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	items, err := p.FetchItemsAssignedTo(context.Background(), cfg, AssignedToAll, "koalmine")
+	if err != nil {
+		t.Fatalf("FetchItemsAssignedTo: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Tarea de cualquiera" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+}
+
+func TestRedmineFetchItemsAssignedToRequiresUser(t *testing.T) {
+	p, _ := Get("redmine")
+	if _, err := p.FetchItemsAssignedTo(context.Background(), Config{"base_url": "http://example.com", "api_key": "secret"}, "", ""); err == nil {
+		t.Error("expected an error when assignedTo is blank")
+	}
+}
+
+func TestRedmineFetchItemsCreatedByMe(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues.json":
+			if got := r.URL.Query().Get("author_id"); got != "me" {
+				t.Errorf("unexpected author_id: %s", got)
+			}
+			if got := r.URL.Query().Get("status_id"); got != "*" {
+				t.Errorf("expected status_id=* to include closed issues, got %s", got)
+			}
+			if got := r.URL.Query().Get("project_id"); got != "koalmine" {
+				t.Errorf("unexpected project_id: %s", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{
+					{
+						"id":         42,
+						"subject":    "Una que cerré yo mismo",
+						"updated_on": "2026-09-01T10:00:00Z",
+						"project":    map[string]any{"name": "Koalmine"},
+						"status":     map[string]any{"id": 1, "name": "Cerrado"},
+						"author":     map[string]any{"id": 5, "name": "Rodrigo"},
+					},
+				},
+			})
+		case "/issue_statuses.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issue_statuses": []map[string]any{
+					{"id": 1, "is_closed": true},
+				},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	items, err := p.FetchItemsCreatedByMe(context.Background(), cfg, "koalmine")
+	if err != nil {
+		t.Fatalf("FetchItemsCreatedByMe: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Una que cerré yo mismo" {
+		t.Errorf("unexpected items: %+v", items)
+	}
+	if !items[0].CreatedByMe {
+		t.Error("expected CreatedByMe true")
+	}
+	if !items[0].Closed {
+		t.Error("expected the closed issue to be reported as closed")
+	}
+}
+
+func TestRedmineListAssignableUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/koalmine/memberships.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"memberships": []map[string]any{
+				{"id": 1, "user": map[string]any{"id": 5, "name": "Rodrigo"}},
+				{"id": 2, "group": map[string]any{"id": 9, "name": "Un Equipo"}},
+				{"id": 3, "user": map[string]any{"id": 9, "name": "Otra Persona"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	options, err := p.ListAssignableUsers(context.Background(), Config{"base_url": server.URL, "api_key": "secret"}, "koalmine")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if len(options) != 2 {
+		t.Fatalf("expected group membership to be skipped, got %+v", options)
+	}
+	if options[0].Value != "5" || options[0].Label != "Rodrigo" {
+		t.Errorf("unexpected options: %+v", options)
+	}
+}
+
+func TestRedmineListAssignableUsersRequiresProject(t *testing.T) {
+	p, _ := Get("redmine")
+	options, err := p.ListAssignableUsers(context.Background(), Config{"base_url": "http://example.com", "api_key": "secret"}, "")
+	if err != nil {
+		t.Fatalf("ListAssignableUsers: %v", err)
+	}
+	if options != nil {
+		t.Errorf("expected nil options for a blank project, got %+v", options)
+	}
+}
+
 func TestRedmineTestConnectionFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

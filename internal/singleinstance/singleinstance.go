@@ -19,7 +19,10 @@ import (
 
 // addr is fixed and specific enough to avoid colliding with other local
 // services. Binding only 127.0.0.1 keeps it unreachable from the network.
-const addr = "127.0.0.1:58743"
+// It's a var, not a const, so tests can point it at an ephemeral port
+// instead of racing a real Koalmine instance that happens to be running on
+// the machine (see singleinstance_test.go).
+var addr = "127.0.0.1:58743"
 
 const showCommand = "show"
 
@@ -27,18 +30,24 @@ const showCommand = "show"
 //
 // If it succeeds, it returns true and onShow will be invoked (from its own
 // goroutine, once per request) every time a later launch asks to be shown.
+// The returned release func gives up the lock — call it right before
+// relaunching a new instance (e.g. during a self-update) so the new
+// process's own Acquire doesn't race this one's shutdown and lose; without
+// it, a later launch can find the port still held by the about-to-exit old
+// process, defer to it via notifyExisting, and then both processes end up
+// exiting with no window left open.
 //
 // If another instance already holds the lock, Acquire forwards a "show
-// window" request to it and returns false — the caller should exit
-// immediately rather than starting a second tray icon/window.
-func Acquire(onShow func()) bool {
+// window" request to it and returns false with a no-op release — the caller
+// should exit immediately rather than starting a second tray icon/window.
+func Acquire(onShow func()) (ok bool, release func()) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		notifyExisting()
-		return false
+		return false, func() {}
 	}
 	go serve(ln, onShow)
-	return true
+	return true, func() { ln.Close() }
 }
 
 func notifyExisting() {

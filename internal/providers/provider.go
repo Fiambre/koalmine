@@ -87,6 +87,15 @@ type CreateItemInput struct {
 	Description string
 }
 
+// AssignedToAll is the sentinel value a panel's AssignedTo (or
+// FetchItemsAssignedTo's assignedTo parameter) can carry to mean "every
+// assignee, no restriction" — as opposed to "" which means "assigned to me"
+// (the same scope as FetchItems). It's a real dropdown option in the panel
+// form ("Todos"), not just an internal detail, so every FetchItemsAssignedTo
+// implementation must recognize it and drop its assignee filter entirely
+// rather than treating it as a literal (and invalid) user identifier.
+const AssignedToAll = "*"
+
 // Comment is one comment/note on a TaskItem.
 type Comment struct {
 	Author    string    `json:"author"`
@@ -99,6 +108,15 @@ type Comment struct {
 // shown to the user (the same string for GitHub/GitLab, a friendlier
 // display name for Redmine).
 type ProjectOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// UserOption is one entry in a panel's "assigned to" dropdown: Value is the
+// provider-specific identifier FetchItemsAssignedTo expects back (a numeric
+// ID for Redmine, a login/username for GitHub/GitLab), Label is what's shown
+// to the user.
+type UserOption struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
 }
@@ -150,6 +168,39 @@ type Provider interface {
 	// can't return project/status directly). Same "whole item, not just an
 	// id" reasoning as FetchComments.
 	FetchItem(ctx context.Context, cfg Config, item TaskItem) (TaskItem, error)
+	// FetchItemsAssignedTo returns open issues/work items assigned to an
+	// arbitrary user (identified by whatever UserOption.Value this
+	// provider hands back from ListAssignableUsers), optionally narrowed
+	// to one project -- unlike FetchItems, which is hardcoded to the
+	// authenticated user and drives the main task list/poller. It exists
+	// solely for custom panels' "assigned to" filter, so it's fine for
+	// this to be a heavier, on-demand call rather than something the
+	// poller caches.
+	FetchItemsAssignedTo(ctx context.Context, cfg Config, assignedTo, project string) ([]TaskItem, error)
+	// FetchItemsCreatedByMe returns every issue/PR/MR authored by the
+	// authenticated user -- open or closed -- optionally narrowed to one
+	// project. Unlike FetchItems (open, currently-assigned-or-mentioned
+	// only) and unlike FetchItemsAssignedTo (needs an explicit user
+	// identifier), this always resolves "me" itself and has no cross-
+	// provider ambiguity, so callers may fan it out across every
+	// configured integration. Exists solely for custom panels' "created by
+	// me" filter -- fine to be a heavier, on-demand call.
+	FetchItemsCreatedByMe(ctx context.Context, cfg Config, project string) ([]TaskItem, error)
+	// ListAssignableUsers returns candidate users for a panel's "assigned
+	// to" dropdown, scoped to one project. Every implementation requires
+	// a non-empty project (listing every user across a whole provider
+	// either needs admin rights or doesn't exist as an endpoint) and
+	// returns (nil, nil) when project is blank -- the panel form's
+	// free-text fallback covers that case instead of treating it as an
+	// error.
+	ListAssignableUsers(ctx context.Context, cfg Config, project string) ([]UserOption, error)
+	// SupportsAssignedTo reports whether this provider has a real per-item
+	// "assigned to a specific other user" concept for ListAssignableUsers/
+	// FetchItemsAssignedTo to use. Todoist does not (see its own type doc
+	// comment on why "assigned to me" is already a synthetic filter there) --
+	// false lets the panel form hide the "assigned to" field entirely rather
+	// than offering something that would only ever error.
+	SupportsAssignedTo() bool
 }
 
 func defaultHTTPClient() *http.Client {

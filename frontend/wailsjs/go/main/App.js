@@ -38,6 +38,14 @@ export function GetComments(arg1) {
   return window['go']['main']['App']['GetComments'](arg1);
 }
 
+export function GetPanelAssignedTasks(arg1) {
+  return window['go']['main']['App']['GetPanelAssignedTasks'](arg1);
+}
+
+export function GetPanelCreatedByMeTasks(arg1) {
+  return window['go']['main']['App']['GetPanelCreatedByMeTasks'](arg1);
+}
+
 export function GetPollIntervalMinutes() {
   return window['go']['main']['App']['GetPollIntervalMinutes']();
 }
@@ -48,6 +56,10 @@ export function GetTasks() {
 
 export function GetUpdateStatus() {
   return window['go']['main']['App']['GetUpdateStatus']();
+}
+
+export function ListAssignableUsers(arg1, arg2) {
+  return window['go']['main']['App']['ListAssignableUsers'](arg1, arg2);
 }
 
 export function ListIntegrations() {
