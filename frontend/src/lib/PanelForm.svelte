@@ -29,8 +29,11 @@
   // "Asignado a" needs one specific integration (cross-provider user IDs
   // don't correspond to each other) and, for a usable dropdown instead of a
   // raw ID/username, a project — see providers.Provider.ListAssignableUsers.
+  // Hidden once "Creado por mí" is checked: TaskList.svelte gives
+  // createdByMe priority over a stale assignedTo value, but showing a field
+  // that would silently be ignored is worse than not showing it at all.
   $: selectedIntegration = integrations.find((i) => i.id === integrationId) ?? null
-  $: showAssignedToField = !!integrationId && !!selectedIntegration?.supportsAssignedTo
+  $: showAssignedToField = !!integrationId && !!selectedIntegration?.supportsAssignedTo && !createdByMe
 
   // The sentinel Panel.AssignedTo value meaning "every assignee, no
   // restriction" — mirrors providers.AssignedToAll on the Go side.
@@ -255,7 +258,7 @@
           </button>
         {/if}
       </label>
-    {:else if !integrationId}
+    {:else if !integrationId && !createdByMe}
       <p class="hint small assigned-hint">{$_('panels.assignedToNeedsIntegration')}</p>
     {/if}
 

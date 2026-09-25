@@ -16,8 +16,14 @@
   // A panel with its own "assigned to" filter is outside the poller's
   // "assigned to me" snapshot (see panels.ts's matchesPanel), so it gets its
   // items from a dedicated fetch instead of the shared tasks/tasks:updated
-  // flow below — see loadAssignedTasks.
-  $: usesAssignedFetch = !!panel?.assignedTo
+  // flow below — see loadAssignedTasks. createdByMe takes priority over a
+  // leftover/stale assignedTo value (the form hides "Asignado a" once
+  // "Creado por mí" is checked and clears it on save, but a panel saved
+  // before that existed — or edited outside the form — could still have
+  // both set; silently falling back to "everyone assigned" for a panel
+  // named "created by me" would be far more confusing than ignoring a
+  // redundant assignedTo).
+  $: usesAssignedFetch = !panel?.createdByMe && !!panel?.assignedTo
   let assignedTasks: providers.TaskItem[] = []
   let assignedLoading = false
   let assignedError = ''
@@ -40,10 +46,9 @@
 
   // A panel with its own "created by me" filter is also outside the
   // poller's snapshot (see panels.ts's matchesPanel) — same reasoning as
-  // usesAssignedFetch above, via its own dedicated fetch. If a panel somehow
-  // has both assignedTo and createdByMe set, assignedTo wins (checked first)
-  // since the panel form doesn't offer a way to combine them meaningfully.
-  $: usesCreatedByMeFetch = !usesAssignedFetch && !!panel?.createdByMe
+  // usesAssignedFetch above, via its own dedicated fetch. Takes priority
+  // over assignedTo — see usesAssignedFetch's comment.
+  $: usesCreatedByMeFetch = !!panel?.createdByMe
   let createdByMeTasks: providers.TaskItem[] = []
   let createdByMeLoading = false
   let createdByMeError = ''
