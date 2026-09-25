@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -311,9 +312,16 @@ func (a *App) GetPanelAssignedTasks(panel store.Panel) ([]providers.TaskItem, er
 // dimension is. Unlike GetPanelAssignedTasks, "created by me" needs no
 // per-provider user identifier, so this loops across every enabled
 // integration (or just panel.IntegrationID, when one is chosen) instead of
-// requiring one specific integration — same pattern as SearchTasks: one
-// integration failing is logged and skipped rather than failing the whole
-// call.
+// requiring one specific integration.
+//
+// One integration failing among several is logged and skipped, same as
+// SearchTasks, so a broken integration doesn't blank out the others. But
+// when a panel is scoped to exactly one integration (the common case), a
+// failure there is the *only* thing that ran — silently swallowing it would
+// leave the user staring at an empty panel with no idea why, which is worse
+// than surfacing the error. So: every failure is collected, and returned
+// (joined) whenever nothing succeeded, regardless of how many integrations
+// were in scope.
 func (a *App) GetPanelCreatedByMeTasks(panel store.Panel) ([]providers.TaskItem, error) {
 	if !panel.CreatedByMe {
 		return nil, fmt.Errorf("el panel no tiene el filtro \"creado por mí\" activado")
@@ -325,6 +333,7 @@ func (a *App) GetPanelCreatedByMeTasks(panel store.Panel) ([]providers.TaskItem,
 	}
 
 	var all []providers.TaskItem
+	var failures []error
 	for _, integ := range cfg.Integrations {
 		if !integ.Enabled {
 			continue
@@ -335,22 +344,32 @@ func (a *App) GetPanelCreatedByMeTasks(panel store.Panel) ([]providers.TaskItem,
 
 		p, ok := providers.Get(integ.Type)
 		if !ok {
-			log.Printf("panel creado por mí: %s: tipo de proveedor desconocido: %s", integ.Name, integ.Type)
+			err := fmt.Errorf("%s: tipo de proveedor desconocido: %s", integ.Name, integ.Type)
+			log.Printf("panel creado por mí: %v", err)
+			failures = append(failures, err)
 			continue
 		}
 
 		resolved, err := store.ResolveConfig(p, integ.ID)
 		if err != nil {
-			log.Printf("panel creado por mí: %s: %v", integ.Name, err)
+			wrapped := fmt.Errorf("%s: %w", integ.Name, err)
+			log.Printf("panel creado por mí: %v", wrapped)
+			failures = append(failures, wrapped)
 			continue
 		}
 
 		items, err := p.FetchItemsCreatedByMe(a.ctx, resolved, panel.Project)
 		if err != nil {
-			log.Printf("panel creado por mí: %s: %v", integ.Name, err)
+			wrapped := fmt.Errorf("%s: %w", integ.Name, err)
+			log.Printf("panel creado por mí: %v", wrapped)
+			failures = append(failures, wrapped)
 			continue
 		}
 		all = append(all, store.NamespaceItems(items, integ, cfg.SameTypeCount(integ.Type))...)
+	}
+
+	if len(all) == 0 && len(failures) > 0 {
+		return nil, errors.Join(failures...)
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
