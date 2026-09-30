@@ -380,11 +380,11 @@
     // them (Seguimiento, and a "created by me" panel — both fetch open and
     // closed alike, unlike every other view) until toggled back on.
     .filter((t) => !(lockToStarred || usesCreatedByMeFetch) || showClosed || !t.closed)
-    // Items from the dedicated "assigned to" fetch are already scoped to
-    // the right panel/assignee (see loadAssignedTasks) — re-checking them
-    // against matchesPanel would wrongly drop them, since that function
-    // always rejects an assignedTo panel (see panels.ts).
-    .filter((t) => usesAssignedFetch || !panel || matchesPanel(t, panel))
+    // Items from a dedicated fetch (assignedTo or createdByMe) are already
+    // scoped to the right panel — re-checking them against matchesPanel
+    // would wrongly drop every single one, since that function always
+    // rejects both kinds of panel unconditionally (see panels.ts).
+    .filter((t) => usesAssignedFetch || usesCreatedByMeFetch || !panel || matchesPanel(t, panel))
 </script>
 
 <section class="tasks">

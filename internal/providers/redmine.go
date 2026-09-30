@@ -241,35 +241,56 @@ func (p *redmineProvider) ListAssignableUsers(ctx context.Context, cfg Config, p
 
 // ListProjects returns every project the API key's user has access to, for
 // the "new task" form's project dropdown.
+// redmineListProjectsPageSize is both the page size and the request cap:
+// a single unpaginated /projects.json?limit=100 silently dropped any
+// project beyond the first 100 (this instance alone has ~155), so a
+// commonly-used project could simply never show up in the dropdown. Paged
+// up to redmineListProjectsMaxPages pages as a safety bound against a
+// pathological total_count.
+const redmineListProjectsPageSize = 100
+const redmineListProjectsMaxPages = 20
+
 func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error) {
-	req, err := p.newRequest(ctx, cfg, http.MethodGet, "/projects.json?limit=100", nil)
-	if err != nil {
-		return nil, err
-	}
+	var options []ProjectOption
+	offset := 0
+	for page := 0; page < redmineListProjectsMaxPages; page++ {
+		path := fmt.Sprintf("/projects.json?limit=%d&offset=%d", redmineListProjectsPageSize, offset)
+		req, err := p.newRequest(ctx, cfg, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo conectar a Redmine: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
-	}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("Redmine respondió %s", resp.Status)
+		}
 
-	var parsed struct {
-		Projects []struct {
-			Identifier string `json:"identifier"`
-			Name       string `json:"name"`
-		} `json:"projects"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
-	}
+		var parsed struct {
+			Projects []struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+			} `json:"projects"`
+			TotalCount int `json:"total_count"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&parsed)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("respuesta inválida de Redmine: %w", err)
+		}
 
-	options := make([]ProjectOption, 0, len(parsed.Projects))
-	for _, pr := range parsed.Projects {
-		options = append(options, ProjectOption{Value: pr.Identifier, Label: pr.Name})
+		for _, pr := range parsed.Projects {
+			options = append(options, ProjectOption{Value: pr.Identifier, Label: pr.Name})
+		}
+
+		offset += len(parsed.Projects)
+		if len(parsed.Projects) == 0 || offset >= parsed.TotalCount {
+			break
+		}
 	}
 	return options, nil
 }

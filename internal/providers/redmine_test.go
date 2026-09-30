@@ -102,6 +102,51 @@ func TestRedmineListProjects(t *testing.T) {
 	}
 }
 
+// TestRedmineListProjectsPaginates guards against the exact bug that hit a
+// real instance with ~155 projects: a project past the first page (e.g.
+// "Tickets SCJ") must not silently disappear from the dropdown.
+func TestRedmineListProjectsPaginates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		offset := r.URL.Query().Get("offset")
+		switch offset {
+		case "0", "":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 3,
+				"projects": []map[string]any{
+					{"id": 1, "identifier": "proyecto-1", "name": "Proyecto 1"},
+					{"id": 2, "identifier": "proyecto-2", "name": "Proyecto 2"},
+				},
+			})
+		case "2":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 3,
+				"projects": []map[string]any{
+					{"id": 87, "identifier": "tickets", "name": "Tickets SCJ"},
+				},
+			})
+		default:
+			t.Errorf("unexpected offset: %s", offset)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	options, err := p.ListProjects(context.Background(), Config{"base_url": server.URL, "api_key": "secret"})
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(options) != 3 {
+		t.Fatalf("expected 3 options across both pages, got %d: %+v", len(options), options)
+	}
+	if options[2].Value != "tickets" || options[2].Label != "Tickets SCJ" {
+		t.Errorf("expected the second page's project to be included, got %+v", options[2])
+	}
+}
+
 func TestRedmineSearchItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
