@@ -70,6 +70,67 @@ func TestRedmineFetchItems(t *testing.T) {
 	}
 }
 
+// TestRedmineProjectKeyMatchesListProjectsValue guards against the exact
+// regression that hit a real panel: TaskItem.Project is Redmine's project
+// *name*, which never matches Panel.project (the value a panel's project
+// dropdown saves, from ListProjects). ProjectKey must match that value
+// instead, so a panel's project filter can actually find its items.
+func TestRedmineProjectKeyMatchesListProjectsValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users/current.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": 5}})
+		case "/issues.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{
+					{
+						"id":         42,
+						"subject":    "Arreglar el build",
+						"updated_on": "2026-09-01T10:00:00Z",
+						"project":    map[string]any{"id": 87, "name": "Tickets SCJ"},
+						"status":     map[string]any{"name": "Nueva"},
+						"author":     map[string]any{"id": 5, "name": "Rodrigo"},
+					},
+				},
+			})
+		case "/projects.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 1,
+				"projects":    []map[string]any{{"id": 87, "name": "Tickets SCJ"}},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p, _ := Get("redmine")
+	cfg := Config{"base_url": server.URL, "api_key": "secret"}
+
+	items, err := p.FetchItems(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("FetchItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Project != "Tickets SCJ" {
+		t.Errorf("expected Project to stay the display name, got %q", items[0].Project)
+	}
+
+	options, err := p.ListProjects(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(options) != 1 {
+		t.Fatalf("expected 1 project option, got %d", len(options))
+	}
+	if items[0].ProjectKey != options[0].Value {
+		t.Errorf("ProjectKey %q doesn't match what a panel's project filter would store (%q)", items[0].ProjectKey, options[0].Value)
+	}
+}
+
 func TestRedmineFetchItemsMissingConfig(t *testing.T) {
 	p, _ := Get("redmine")
 	if _, err := p.FetchItems(context.Background(), Config{}); err == nil {
@@ -97,7 +158,7 @@ func TestRedmineListProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects: %v", err)
 	}
-	if len(options) != 2 || options[0].Value != "mi-proyecto" || options[0].Label != "Mi Proyecto" {
+	if len(options) != 2 || options[0].Value != "1" || options[0].Label != "Mi Proyecto" {
 		t.Errorf("unexpected options: %+v", options)
 	}
 }
@@ -142,7 +203,7 @@ func TestRedmineListProjectsPaginates(t *testing.T) {
 	if len(options) != 3 {
 		t.Fatalf("expected 3 options across both pages, got %d: %+v", len(options), options)
 	}
-	if options[2].Value != "tickets" || options[2].Label != "Tickets SCJ" {
+	if options[2].Value != "87" || options[2].Label != "Tickets SCJ" {
 		t.Errorf("expected the second page's project to be included, got %+v", options[2])
 	}
 }

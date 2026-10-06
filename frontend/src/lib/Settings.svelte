@@ -10,6 +10,8 @@
     TestConnection,
     GetAutostartEnabled,
     SetAutostartEnabled,
+    GetGlobalHotkey,
+    SetGlobalHotkey,
     GetAppVersion,
     GetUpdateStatus,
     CheckForUpdateNow,
@@ -40,6 +42,10 @@
   let autostart = false
   let autostartStatus: Status = { kind: 'idle' }
 
+  let globalHotkey = ''
+  let hotkeyStatus: Status = { kind: 'idle' }
+  let capturingHotkey = false
+
   let appVersion = ''
   let updateInfo: updater.Info | null = null
   let updateStatus: Status = { kind: 'idle' }
@@ -64,6 +70,7 @@
         statusByIntegration[integ.id] = { kind: 'idle' }
       }
       autostart = await GetAutostartEnabled()
+      globalHotkey = await GetGlobalHotkey()
       appVersion = await GetAppVersion()
       updateInfo = await GetUpdateStatus()
     } catch (e) {
@@ -82,6 +89,7 @@
 
   onDestroy(() => {
     EventsOff('update:available')
+    stopCapturingHotkey()
   })
 
   async function checkNow() {
@@ -118,6 +126,101 @@
     } catch (e) {
       autostart = !autostart
       autostartStatus = { kind: 'error', message: String(e) }
+    }
+  }
+
+  // event.code, not event.key: layout-independent and doesn't flip case
+  // under Shift (KeyK stays KeyK whether or not Shift is held) — matches
+  // the token vocabulary internal/hotkey.ParseCombo accepts on the Go side.
+  const NAMED_KEYS: Record<string, string> = {
+    Space: 'Space',
+    Escape: 'Escape',
+    Tab: 'Tab',
+    Enter: 'Enter',
+    Backspace: 'Backspace',
+    Delete: 'Delete',
+    Insert: 'Insert',
+    Home: 'Home',
+    End: 'End',
+    PageUp: 'PageUp',
+    PageDown: 'PageDown',
+    ArrowUp: 'ArrowUp',
+    ArrowDown: 'ArrowDown',
+    ArrowLeft: 'ArrowLeft',
+    ArrowRight: 'ArrowRight',
+  }
+
+  function keyNameFromCode(code: string): string | null {
+    if (code.startsWith('Key') && code.length === 4) return code.slice(3) // KeyK -> K
+    if (code.startsWith('Digit') && code.length === 6) return code.slice(5) // Digit5 -> 5
+    if (/^F([1-9]|1[0-2])$/.test(code)) return code // F1..F12 already match
+    return NAMED_KEYS[code] ?? null
+  }
+
+  function isModifierCode(code: string): boolean {
+    return code.startsWith('Control') || code.startsWith('Alt') || code.startsWith('Shift') || code.startsWith('Meta')
+  }
+
+  let hotkeyCaptureHandler: ((e: KeyboardEvent) => void) | null = null
+
+  function startCapturingHotkey() {
+    capturingHotkey = true
+    hotkeyStatus = { kind: 'idle' }
+    hotkeyCaptureHandler = (e: KeyboardEvent) => {
+      // Swallow the keystroke so it doesn't also trigger whatever it would
+      // normally do (e.g. Ctrl+F opening a browser find bar) while we're
+      // just listening for the combo.
+      e.preventDefault()
+      if (e.code === 'Escape') {
+        stopCapturingHotkey()
+        return
+      }
+      if (isModifierCode(e.code)) return // still waiting for a real key
+
+      const mods: string[] = []
+      if (e.ctrlKey) mods.push('Ctrl')
+      if (e.altKey) mods.push('Alt')
+      if (e.shiftKey) mods.push('Shift')
+      if (e.metaKey) mods.push('Win')
+      const key = keyNameFromCode(e.code)
+
+      stopCapturingHotkey()
+      if (!key || mods.length === 0) {
+        hotkeyStatus = { kind: 'error', message: $_('settings.hotkeyInvalid') }
+        return
+      }
+      saveHotkey([...mods, key].join('+'))
+    }
+    window.addEventListener('keydown', hotkeyCaptureHandler, true)
+  }
+
+  function stopCapturingHotkey() {
+    capturingHotkey = false
+    if (hotkeyCaptureHandler) {
+      window.removeEventListener('keydown', hotkeyCaptureHandler, true)
+      hotkeyCaptureHandler = null
+    }
+  }
+
+  async function saveHotkey(combo: string) {
+    hotkeyStatus = { kind: 'saving' }
+    try {
+      await SetGlobalHotkey(combo)
+      globalHotkey = combo
+      hotkeyStatus = { kind: 'saved', message: $_('settings.hotkeySaved') }
+    } catch (e) {
+      hotkeyStatus = { kind: 'error', message: String(e) }
+    }
+  }
+
+  async function clearHotkey() {
+    hotkeyStatus = { kind: 'saving' }
+    try {
+      await SetGlobalHotkey('')
+      globalHotkey = ''
+      hotkeyStatus = { kind: 'saved', message: $_('settings.hotkeyCleared') }
+    } catch (e) {
+      hotkeyStatus = { kind: 'error', message: String(e) }
     }
   }
 
@@ -262,6 +365,32 @@
         <span class="status ok">{autostartStatus.message}</span>
       {:else if autostartStatus.kind === 'error'}
         <span class="status error">{autostartStatus.message}</span>
+      {/if}
+    </article>
+
+    <article class="provider-card">
+      <p class="hint small hotkey-label"><strong>{$_('settings.hotkeyLabel')}</strong></p>
+      <p class="hint small">{$_('settings.hotkeyHint')}</p>
+      <div class="hotkey-row">
+        {#if capturingHotkey}
+          <span class="hotkey-current capturing">{$_('settings.hotkeyCapturing')}</span>
+          <button on:click={stopCapturingHotkey}>{$_('tasks.formCancel')}</button>
+        {:else}
+          <span class="hotkey-current">{globalHotkey || $_('settings.hotkeyNone')}</span>
+          <button on:click={startCapturingHotkey} disabled={hotkeyStatus.kind === 'saving'}>
+            {$_('settings.hotkeyChange')}
+          </button>
+          {#if globalHotkey}
+            <button on:click={clearHotkey} disabled={hotkeyStatus.kind === 'saving'}>
+              {$_('settings.hotkeyClear')}
+            </button>
+          {/if}
+        {/if}
+      </div>
+      {#if hotkeyStatus.kind === 'saved'}
+        <span class="status ok">{hotkeyStatus.message}</span>
+      {:else if hotkeyStatus.kind === 'error'}
+        <span class="status error">{hotkeyStatus.message}</span>
       {/if}
     </article>
 
@@ -437,6 +566,31 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+  }
+
+  .hotkey-label {
+    margin-bottom: 0.2rem;
+  }
+
+  .hotkey-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.4rem;
+  }
+
+  .hotkey-current {
+    font-family: monospace;
+    font-size: 0.9rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+
+  .hotkey-current.capturing {
+    color: var(--accent);
+    border-color: var(--accent);
   }
 
   .version-line {

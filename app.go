@@ -14,6 +14,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"koalmine/internal/autostart"
+	"koalmine/internal/hotkey"
 	"koalmine/internal/notify"
 	"koalmine/internal/poller"
 	"koalmine/internal/providers"
@@ -41,6 +42,18 @@ type App struct {
 	// lock — see ApplyUpdate, which calls it right before relaunching so
 	// the new process doesn't lose a race against this one's shutdown.
 	releaseSingleInstance func()
+
+	hotkeyMu  sync.Mutex
+	hotkeyReg *hotkey.Registration // nil when no global hotkey is active
+
+	// windowVisible is tracked, not queried — Wails exposes no "is the
+	// window currently shown" call. Every code path that shows or hides
+	// the window (showWindow/hideWindow/markWindowHidden, used from here,
+	// main.go and tray.go) keeps this in sync so toggleWindowOnTop always
+	// knows which way to toggle.
+	windowMu         sync.Mutex
+	windowVisible    bool
+	alwaysOnTopSetAt time.Time // see alwaysOnTopBlurGuard
 }
 
 // NewApp creates a new App application struct
@@ -87,6 +100,165 @@ func (a *App) startup(ctx context.Context) {
 	}
 	go a.poller.Run(ctx)
 	go a.watchForUpdates(ctx)
+
+	if cfg, err := store.Load(); err != nil {
+		log.Printf("no se pudo cargar la configuración para el atajo global: %v", err)
+	} else if cfg.GlobalHotkey != "" {
+		// Best-effort: a saved combo that's now invalid (unsupported OS,
+		// or owned by another app that started first) shouldn't block
+		// startup — just log it, same tolerance as every other
+		// background init here.
+		if err := a.applyHotkey(cfg.GlobalHotkey); err != nil {
+			log.Printf("no se pudo registrar el atajo global %q: %v", cfg.GlobalHotkey, err)
+		}
+	}
+}
+
+// showWindow shows the main window, brings it out of a minimised state,
+// and marks it visible. Every code path in this app that shows the window
+// goes through here (not a raw wailsRuntime.WindowShow) specifically so
+// toggleWindowOnTop's tracked state stays accurate regardless of which
+// path last touched visibility — see the App struct's windowVisible doc.
+func (a *App) showWindow() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowShow(a.ctx)
+	wailsRuntime.WindowUnminimise(a.ctx)
+	a.windowMu.Lock()
+	a.windowVisible = true
+	a.windowMu.Unlock()
+}
+
+// hideWindow hides the main window and marks it hidden — same "every show/
+// hide path goes through here" reasoning as showWindow.
+func (a *App) hideWindow() {
+	if a.ctx == nil {
+		return
+	}
+	wailsRuntime.WindowHide(a.ctx)
+	a.windowMu.Lock()
+	a.windowVisible = false
+	a.windowMu.Unlock()
+}
+
+// markWindowHidden updates the tracked visibility flag without calling
+// WindowHide — for main.go's OnBeforeClose, where Wails' own
+// HideWindowOnClose is already about to hide the window; calling the full
+// hideWindow() there would issue a redundant WindowHide.
+func (a *App) markWindowHidden() {
+	a.windowMu.Lock()
+	a.windowVisible = false
+	a.windowMu.Unlock()
+}
+
+// toggleWindowOnTop is the global hotkey's callback: show the window on
+// top of everything if it's not really visible, hide it otherwise.
+func (a *App) toggleWindowOnTop() {
+	if a.ctx == nil {
+		return
+	}
+	a.windowMu.Lock()
+	visible := a.windowVisible
+	a.windowMu.Unlock()
+
+	// Minimised counts as "not really visible" here even though our own
+	// flag doesn't track minimise state — Wails does expose a live query
+	// for that one case, so use it instead of guessing wrong and having
+	// the hotkey seem to do nothing for a minimised window.
+	if visible && !wailsRuntime.WindowIsMinimised(a.ctx) {
+		a.hideWindow()
+		return
+	}
+	a.windowMu.Lock()
+	a.alwaysOnTopSetAt = time.Now()
+	a.windowMu.Unlock()
+	wailsRuntime.WindowSetAlwaysOnTop(a.ctx, true)
+	a.showWindow()
+}
+
+// alwaysOnTopBlurGuard is how soon after toggleWindowOnTop turns
+// always-on-top on a DisableAlwaysOnTop call is ignored. Showing a
+// previously-hidden WebView2 window hands OS focus to its embedded webview
+// control, and that handoff fires a spurious "blur" on the page's own
+// window object almost immediately — with no debounce, the window would
+// lose its on-top state a few milliseconds after appearing, before the
+// user ever did anything. This window is short enough to not mask a real,
+// deliberate focus change to another app.
+const alwaysOnTopBlurGuard = 400 * time.Millisecond
+
+// DisableAlwaysOnTop turns off the always-on-top state toggleWindowOnTop
+// sets when the hotkey shows the window. Called from the frontend on the
+// window's own blur event, so the window only stays pinned above
+// everything else while it actually has focus — once the user clicks
+// elsewhere, it behaves like a normal window again instead of staying
+// stuck on top. See alwaysOnTopBlurGuard for why a blur arriving right
+// after the show is ignored instead of acted on.
+func (a *App) DisableAlwaysOnTop() {
+	if a.ctx == nil {
+		return
+	}
+	a.windowMu.Lock()
+	tooSoon := time.Since(a.alwaysOnTopSetAt) < alwaysOnTopBlurGuard
+	a.windowMu.Unlock()
+	if tooSoon {
+		return
+	}
+	wailsRuntime.WindowSetAlwaysOnTop(a.ctx, false)
+}
+
+// applyHotkey releases any previously-registered global hotkey and
+// registers combo in its place ("" just releases, registering nothing).
+// Used both at startup (loading a saved combo) and from SetGlobalHotkey
+// (the user picking a new one from Settings).
+func (a *App) applyHotkey(combo string) error {
+	a.hotkeyMu.Lock()
+	defer a.hotkeyMu.Unlock()
+
+	if a.hotkeyReg != nil {
+		a.hotkeyReg.Close()
+		a.hotkeyReg = nil
+	}
+	if combo == "" {
+		return nil
+	}
+
+	parsed, err := hotkey.ParseCombo(combo)
+	if err != nil {
+		return err
+	}
+	reg, err := hotkey.Register(parsed, a.toggleWindowOnTop)
+	if err != nil {
+		return err
+	}
+	a.hotkeyReg = reg
+	return nil
+}
+
+// GetGlobalHotkey returns the currently configured global hotkey combo
+// ("" if none), for Settings to display.
+func (a *App) GetGlobalHotkey() (string, error) {
+	cfg, err := store.Load()
+	if err != nil {
+		return "", err
+	}
+	return cfg.GlobalHotkey, nil
+}
+
+// SetGlobalHotkey registers combo as the new global hotkey ("" to clear
+// it), persisting it only once registration actually succeeds — an
+// invalid or already-taken combo is returned as an error and never saved,
+// so Settings can show it without leaving a broken value behind.
+func (a *App) SetGlobalHotkey(combo string) error {
+	if err := a.applyHotkey(combo); err != nil {
+		return err
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		return err
+	}
+	cfg.GlobalHotkey = combo
+	return store.Save(cfg)
 }
 
 // watchForUpdates checks for a newer release on startup, then again every

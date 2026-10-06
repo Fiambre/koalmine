@@ -85,6 +85,23 @@ func TestSaveThenLoadRoundTripsPanels(t *testing.T) {
 	}
 }
 
+func TestSaveThenLoadRoundTripsGlobalHotkey(t *testing.T) {
+	withTempConfigDir(t)
+
+	cfg := Config{GlobalHotkey: "Ctrl+Shift+K", PollIntervalMinutes: defaultPollIntervalMinutes}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.GlobalHotkey != "Ctrl+Shift+K" {
+		t.Errorf("expected GlobalHotkey to round-trip, got %q", loaded.GlobalHotkey)
+	}
+}
+
 // TestLoadMigratesLegacyProvidersShape uses the exact shape a real
 // pre-multi-integration config.json had (one slot per provider type, keyed
 // by name) to verify Load() transparently upgrades it: each old entry

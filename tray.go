@@ -48,16 +48,14 @@ func onTrayReady() {
 		for {
 			select {
 			case <-mShow.ClickedCh:
-				if app.ctx != nil {
-					wailsRuntime.WindowShow(app.ctx)
-				}
+				app.showWindow()
 			case <-mRefresh.ClickedCh:
 				if app.ctx != nil {
 					app.RefreshNow()
 				}
 			case <-mSettings.ClickedCh:
 				if app.ctx != nil {
-					wailsRuntime.WindowShow(app.ctx)
+					app.showWindow()
 					wailsRuntime.EventsEmit(app.ctx, "navigate", "settings")
 				}
 			case <-mUpdate.ClickedCh:

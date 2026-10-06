@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"embed"
 
 	"github.com/getlantern/systray"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"koalmine/internal/notify"
 	"koalmine/internal/singleinstance"
@@ -39,11 +39,7 @@ func main() {
 // dropped rather than queued, since by the time anyone could race it the
 // window has already finished mounting.
 func showExistingWindow() {
-	if app.ctx == nil {
-		return
-	}
-	wailsRuntime.WindowShow(app.ctx)
-	wailsRuntime.WindowUnminimise(app.ctx)
+	app.showWindow()
 }
 
 // runWails starts the Wails application. It must run on its own goroutine
@@ -62,6 +58,13 @@ func runWails() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		// HideWindowOnClose already makes the close button hide rather
+		// than quit — this just keeps App's tracked windowVisible flag
+		// (see toggleWindowOnTop) in sync with that path too.
+		OnBeforeClose: func(ctx context.Context) bool {
+			app.markWindowHidden()
+			return false
+		},
 		Bind: []interface{}{
 			app,
 		},

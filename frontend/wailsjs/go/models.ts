@@ -186,9 +186,11 @@ export namespace providers {
 	    title: string;
 	    url: string;
 	    project: string;
+	    projectKey: string;
 	    status: string;
 	    closed: boolean;
 	    author: string;
+	    assignee: string;
 	    description: string;
 	    createdByMe: boolean;
 	    // Go type: time
@@ -207,9 +209,11 @@ export namespace providers {
 	        this.title = source["title"];
 	        this.url = source["url"];
 	        this.project = source["project"];
+	        this.projectKey = source["projectKey"];
 	        this.status = source["status"];
 	        this.closed = source["closed"];
 	        this.author = source["author"];
+	        this.assignee = source["assignee"];
 	        this.description = source["description"];
 	        this.createdByMe = source["createdByMe"];
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);

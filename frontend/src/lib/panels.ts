@@ -7,7 +7,11 @@ import type { providers, store } from '../../wailsjs/go/models'
 // shouldn't be re-checked against it.
 export function matchesPanelFilters(item: providers.TaskItem, panel: store.Panel): boolean {
   if (panel.integrationId && item.integrationId !== panel.integrationId) return false
-  if (panel.project && item.project !== panel.project) return false
+  // projectKey, not project: project is a display name (e.g. Redmine's
+  // project name), which doesn't necessarily match the identifier
+  // Panel.project stores (e.g. Redmine's numeric project ID) — see
+  // providers.TaskItem's doc comment.
+  if (panel.project && item.projectKey !== panel.project) return false
   if (panel.type && item.type !== panel.type) return false
   if (panel.status === 'open' && item.closed) return false
   if (panel.status === 'closed' && !item.closed) return false

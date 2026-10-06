@@ -514,15 +514,33 @@ func gitlabToTaskItem(it gitlabItem, itemType ItemType) TaskItem {
 		Type:     itemType,
 		Title:    it.Title,
 		URL:      it.WebURL,
-		Project:  projectFromReference(it.References.Full),
-		Status:   it.State,
+		// "group/project" already is GitLab's own identifier shape (same
+		// as ProjectOption.Value/CreateItemInput.Project), so ProjectKey
+		// just mirrors Project here — see the same note on
+		// githubToTaskItem.
+		Project:    projectFromReference(it.References.Full),
+		ProjectKey: projectFromReference(it.References.Full),
+		Status:     it.State,
 		// MRs also have "merged"/"locked" states beyond "opened"/"closed" —
 		// anything other than "opened" is no longer actionable.
 		Closed:      it.State != "opened",
 		Author:      it.Author.Username,
+		Assignee:    gitlabAssigneeNames(it.Assignees),
 		Description: it.Description,
 		UpdatedAt:   updatedAt,
 	}
+}
+
+// gitlabAssigneeNames joins a GitLab issue/MR's assignee usernames (it can
+// have several) into one display string — "" when unassigned.
+func gitlabAssigneeNames(assignees []struct {
+	Username string `json:"username"`
+}) string {
+	names := make([]string, 0, len(assignees))
+	for _, a := range assignees {
+		names = append(names, a.Username)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (p *gitlabProvider) newRequest(ctx context.Context, cfg Config, method, path string, body io.Reader) (*http.Request, error) {
@@ -566,6 +584,9 @@ type gitlabItem struct {
 	Author      struct {
 		Username string `json:"username"`
 	} `json:"author"`
+	Assignees []struct {
+		Username string `json:"username"`
+	} `json:"assignees"`
 	References struct {
 		Full string `json:"full"`
 	} `json:"references"`

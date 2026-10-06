@@ -439,12 +439,16 @@ func todoistToTaskItem(task todoistTask, projectName string) TaskItem {
 	}
 
 	return TaskItem{
-		ID:          fmt.Sprintf("todoist:%s", task.ID),
-		Provider:    "todoist",
-		Type:        ItemTypeIssue,
-		Title:       task.Content,
-		URL:         fmt.Sprintf("https://app.todoist.com/app/task/%s", task.ID),
-		Project:     projectName,
+		ID:       fmt.Sprintf("todoist:%s", task.ID),
+		Provider: "todoist",
+		Type:     ItemTypeIssue,
+		Title:    task.Content,
+		URL:      fmt.Sprintf("https://app.todoist.com/app/task/%s", task.ID),
+		Project:  projectName,
+		// Project is the resolved display name (see fetchProjectNames) —
+		// ProjectOption.Value/Panel.Project use the raw project_id instead,
+		// same split as Redmine's name-vs-identifier.
+		ProjectKey:  task.ProjectID,
 		Status:      todoistPriorityLabel(task.Priority),
 		Closed:      task.CompletedAt != nil && *task.CompletedAt != "",
 		Description: task.Description,

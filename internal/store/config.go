@@ -62,6 +62,10 @@ type Config struct {
 	Integrations        []Integration `json:"integrations"`
 	PollIntervalMinutes int           `json:"pollIntervalMinutes"`
 	Panels              []Panel       `json:"panels"`
+	// GlobalHotkey is a canonical combo string (e.g. "Ctrl+Shift+K", see
+	// internal/hotkey.Format) that toggles the main window system-wide.
+	// Empty means no hotkey is registered.
+	GlobalHotkey string `json:"globalHotkey,omitempty"`
 }
 
 // IntegrationByID returns the integration with the given ID, if any. A

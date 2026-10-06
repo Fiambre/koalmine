@@ -26,6 +26,10 @@ export function DeletePanel(arg1) {
   return window['go']['main']['App']['DeletePanel'](arg1);
 }
 
+export function DisableAlwaysOnTop() {
+  return window['go']['main']['App']['DisableAlwaysOnTop']();
+}
+
 export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
@@ -36,6 +40,10 @@ export function GetAutostartEnabled() {
 
 export function GetComments(arg1) {
   return window['go']['main']['App']['GetComments'](arg1);
+}
+
+export function GetGlobalHotkey() {
+  return window['go']['main']['App']['GetGlobalHotkey']();
 }
 
 export function GetPanelAssignedTasks(arg1) {
@@ -100,6 +108,10 @@ export function SearchTasks(arg1) {
 
 export function SetAutostartEnabled(arg1) {
   return window['go']['main']['App']['SetAutostartEnabled'](arg1);
+}
+
+export function SetGlobalHotkey(arg1) {
+  return window['go']['main']['App']['SetGlobalHotkey'](arg1);
 }
 
 export function SetPollIntervalMinutes(arg1) {

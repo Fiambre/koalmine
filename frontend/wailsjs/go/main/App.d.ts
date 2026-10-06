@@ -17,11 +17,15 @@ export function DeleteIntegration(arg1:string):Promise<void>;
 
 export function DeletePanel(arg1:string):Promise<void>;
 
+export function DisableAlwaysOnTop():Promise<void>;
+
 export function GetAppVersion():Promise<string>;
 
 export function GetAutostartEnabled():Promise<boolean>;
 
 export function GetComments(arg1:providers.TaskItem):Promise<Array<providers.Comment>>;
+
+export function GetGlobalHotkey():Promise<string>;
 
 export function GetPanelAssignedTasks(arg1:store.Panel):Promise<Array<providers.TaskItem>>;
 
@@ -54,6 +58,8 @@ export function SavePanel(arg1:store.Panel):Promise<store.Panel>;
 export function SearchTasks(arg1:string):Promise<Array<providers.TaskItem>>;
 
 export function SetAutostartEnabled(arg1:boolean):Promise<void>;
+
+export function SetGlobalHotkey(arg1:string):Promise<void>;
 
 export function SetPollIntervalMinutes(arg1:number):Promise<void>;
 

@@ -239,8 +239,6 @@ func (p *redmineProvider) ListAssignableUsers(ctx context.Context, cfg Config, p
 	return options, nil
 }
 
-// ListProjects returns every project the API key's user has access to, for
-// the "new task" form's project dropdown.
 // redmineListProjectsPageSize is both the page size and the request cap:
 // a single unpaginated /projects.json?limit=100 silently dropped any
 // project beyond the first 100 (this instance alone has ~155), so a
@@ -250,6 +248,13 @@ func (p *redmineProvider) ListAssignableUsers(ctx context.Context, cfg Config, p
 const redmineListProjectsPageSize = 100
 const redmineListProjectsMaxPages = 20
 
+// ListProjects returns every project the API key's user has access to, for
+// the "new task" form's and panel form's project dropdowns. Value is the
+// project's numeric ID rather than its identifier slug — Redmine's REST API
+// accepts either interchangeably everywhere a project is referenced, and
+// the numeric ID is what TaskItem.ProjectKey uses too (see
+// redmineToTaskItem), since an issue's own JSON never carries its project's
+// identifier slug, only its ID and display name.
 func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]ProjectOption, error) {
 	var options []ProjectOption
 	offset := 0
@@ -272,8 +277,8 @@ func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]Proje
 
 		var parsed struct {
 			Projects []struct {
-				Identifier string `json:"identifier"`
-				Name       string `json:"name"`
+				ID   int    `json:"id"`
+				Name string `json:"name"`
 			} `json:"projects"`
 			TotalCount int `json:"total_count"`
 		}
@@ -284,7 +289,7 @@ func (p *redmineProvider) ListProjects(ctx context.Context, cfg Config) ([]Proje
 		}
 
 		for _, pr := range parsed.Projects {
-			options = append(options, ProjectOption{Value: pr.Identifier, Label: pr.Name})
+			options = append(options, ProjectOption{Value: strconv.Itoa(pr.ID), Label: pr.Name})
 		}
 
 		offset += len(parsed.Projects)
@@ -649,15 +654,22 @@ type taskItemWithAuthor struct {
 func redmineToTaskItem(issue redmineIssue, baseURL string, closed bool) TaskItem {
 	updatedAt, _ := time.Parse(time.RFC3339, issue.UpdatedOn)
 	return TaskItem{
-		ID:          fmt.Sprintf("redmine:%d", issue.ID),
-		Provider:    "redmine",
-		Type:        ItemTypeIssue,
-		Title:       issue.Subject,
-		URL:         fmt.Sprintf("%s/issues/%d", baseURL, issue.ID),
-		Project:     issue.Project.Name,
+		ID:       fmt.Sprintf("redmine:%d", issue.ID),
+		Provider: "redmine",
+		Type:     ItemTypeIssue,
+		Title:    issue.Subject,
+		URL:      fmt.Sprintf("%s/issues/%d", baseURL, issue.ID),
+		Project:  issue.Project.Name,
+		// Redmine's issue payload never carries its project's identifier
+		// slug, only its numeric ID and display name — and ListProjects
+		// below uses that same numeric ID as ProjectOption.Value/
+		// Panel.Project's value, precisely so this always lines up without
+		// a second lookup.
+		ProjectKey:  strconv.Itoa(issue.Project.ID),
 		Status:      issue.Status.Name,
 		Closed:      closed,
 		Author:      issue.Author.Name,
+		Assignee:    issue.AssignedTo.Name,
 		Description: issue.Description,
 		UpdatedAt:   updatedAt,
 	}
@@ -734,6 +746,7 @@ type redmineIssue struct {
 	Description string `json:"description"`
 	UpdatedOn   string `json:"updated_on"`
 	Project     struct {
+		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"project"`
 	Status struct {
@@ -744,4 +757,7 @@ type redmineIssue struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"author"`
+	AssignedTo struct {
+		Name string `json:"name"`
+	} `json:"assigned_to"`
 }

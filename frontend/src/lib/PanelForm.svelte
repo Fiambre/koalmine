@@ -24,7 +24,6 @@
 
   let projectOptions: providers.ProjectOption[] = []
   let loadingProjects = false
-  let manualProject = true
 
   // "Asignado a" needs one specific integration (cross-provider user IDs
   // don't correspond to each other) and, for a usable dropdown instead of a
@@ -98,16 +97,14 @@
   async function loadProjectOptions(id: string) {
     if (!id) {
       projectOptions = []
-      manualProject = true
       return
     }
     loadingProjects = true
     try {
       projectOptions = (await ListProjects(id)) ?? []
-      manualProject = projectOptions.length === 0
     } catch {
+      // The project field just falls back to plain free-text entry.
       projectOptions = []
-      manualProject = true
     } finally {
       loadingProjects = false
     }
@@ -117,8 +114,6 @@
     integrationId = (e.target as HTMLSelectElement).value
     loadProjectOptions(integrationId)
   }
-
-  $: showProjectDropdown = !manualProject && !loadingProjects && projectOptions.length > 0
 
   async function submit() {
     if (!name.trim()) {
@@ -191,25 +186,14 @@
 
     <label class="form-field">
       <span>{$_('panels.projectLabel')}</span>
+      <input type="text" list="panel-project-options" bind:value={project} placeholder={$_('panels.projectAll')} />
+      <datalist id="panel-project-options">
+        {#each projectOptions as opt (opt.value)}
+          <option value={opt.value} label={opt.label}>{opt.label}</option>
+        {/each}
+      </datalist>
       {#if loadingProjects}
         <p class="hint small">{$_('panels.projectLoading')}</p>
-      {:else if showProjectDropdown}
-        <select bind:value={project}>
-          <option value="">{$_('panels.projectAll')}</option>
-          {#each projectOptions as opt (opt.value)}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
-        <button type="button" class="link-btn" on:click={() => (manualProject = true)}>
-          {$_('panels.projectManual')}
-        </button>
-      {:else}
-        <input type="text" bind:value={project} placeholder={$_('panels.projectAll')} />
-        {#if projectOptions.length > 0}
-          <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
-            {$_('panels.projectFromList')}
-          </button>
-        {/if}
       {/if}
     </label>
 

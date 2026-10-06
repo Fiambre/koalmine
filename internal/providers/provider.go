@@ -33,13 +33,30 @@ type TaskItem struct {
 	Type          ItemType `json:"type"`
 	Title         string   `json:"title"`
 	URL           string   `json:"url"`
-	Project       string   `json:"project"`
-	Status        string   `json:"status"`
+	// Project is the human-readable display name shown in the UI (e.g. "My
+	// Project"), which for some providers differs from the identifier
+	// ListProjects/CreateItemInput/Panel.Project use. Never compare it
+	// against a panel's project filter — use ProjectKey for that.
+	Project string `json:"project"`
+	// ProjectKey is this item's project in the same shape
+	// ProjectOption.Value/CreateItemInput.Project/Panel.Project use — e.g.
+	// GitHub/GitLab's "owner/repo" (identical to Project there), or
+	// Redmine's numeric project ID as a string (unlike Project, which is
+	// Redmine's project *name*). It exists so a panel's project filter can
+	// match an item without caring whether a given provider's identifier
+	// happens to equal its display name.
+	ProjectKey string `json:"projectKey"`
+	Status     string `json:"status"`
 	// Closed reports whether the item is in a terminal state (closed issue,
 	// closed or merged PR/MR) — used to drop it from views that only want
 	// actionable items, e.g. Seguimiento's default (non-search) list.
-	Closed      bool   `json:"closed"`
-	Author      string `json:"author"`
+	Closed bool   `json:"closed"`
+	Author string `json:"author"`
+	// Assignee is who the item is currently assigned to, display-name/
+	// username form (same shape as Author, not a provider identifier) — left
+	// blank where a provider has no per-item assignee concept (Todoist) or
+	// the item is unassigned.
+	Assignee    string `json:"assignee"`
 	Description string `json:"description"`
 	// CreatedByMe reports whether the authenticated user is this item's
 	// author/reporter — a best-effort signal computed by comparing the

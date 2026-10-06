@@ -4,7 +4,7 @@
   import Settings from './lib/Settings.svelte'
   import TaskList from './lib/TaskList.svelte'
   import PanelForm from './lib/PanelForm.svelte'
-  import { GetTasks, ListPanels } from '../wailsjs/go/main/App.js'
+  import { GetTasks, ListPanels, DisableAlwaysOnTop } from '../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
   import type { providers, store } from '../wailsjs/go/models'
   import { starredItems } from './lib/starred'
@@ -31,11 +31,25 @@
     taskCount = allTasks.length
   }
 
+  // The hotkey (see App.toggleWindowOnTop in app.go) sets the window
+  // always-on-top when it shows it, so it actually appears above whatever
+  // had focus — but it should only stay pinned there while it has focus
+  // itself, not forever. window's own blur fires when the OS-level window
+  // loses focus, which is the simplest reliable signal for that; there's
+  // no Wails Go-side blur hook to use instead.
+  function onWindowBlur() {
+    DisableAlwaysOnTop().catch(() => {
+      // Best-effort — losing this call just means the window stays
+      // pinned on top a little longer than ideal, not a real failure.
+    })
+  }
+
   onMount(async () => {
     EventsOn('navigate', (target: string) => {
       if (target === 'tasks' || target === 'watchlist' || target === 'settings') view = target
     })
     EventsOn('tasks:updated', onUpdated)
+    window.addEventListener('blur', onWindowBlur)
     try {
       allTasks = (await GetTasks()) ?? []
       taskCount = allTasks.length
@@ -52,6 +66,7 @@
   onDestroy(() => {
     EventsOff('navigate')
     EventsOff('tasks:updated')
+    window.removeEventListener('blur', onWindowBlur)
   })
 
   function openNewPanel() {

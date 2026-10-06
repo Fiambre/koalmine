@@ -6,6 +6,7 @@
   import type { providers, main, store } from '../../wailsjs/go/models'
   import { starredItems, toggleStar, updateStarredItem, markRefreshed, needsRefresh } from './starred'
   import { matchesPanel, matchesPanelFilters } from './panels'
+  import { renderMarkdown } from './markdown'
 
   export let lockToStarred = false
   // A custom panel's filter (project/integration/type/status) — its own
@@ -96,7 +97,6 @@
   let projectOptions: providers.ProjectOption[] = []
   let loadingProjects = false
   let projectLoadError = ''
-  let manualProject = false
 
   let searchQuery = ''
   let searching = false
@@ -173,7 +173,6 @@
   $: dedicatedLoading = usesAssignedFetch ? assignedLoading : usesCreatedByMeFetch ? createdByMeLoading : refreshing
   $: enabledIntegrations = integrationList.filter((i) => i.enabled)
   $: formProviderInfo = enabledIntegrations.find((i) => i.id === formProvider) ?? null
-  $: showProjectDropdown = !manualProject && !loadingProjects && projectOptions.length > 0
 
   function onUpdated(items: providers.TaskItem[]) {
     tasks = items ?? []
@@ -265,6 +264,28 @@
     OpenURL(url)
   }
 
+  // Table view's author column shows this instead of the full name, to keep
+  // the column narrow — the full name is still available as the cell's
+  // title/tooltip.
+  function initials(name: string): string {
+    const parts = name.trim().split(/\s+/).filter(Boolean)
+    if (parts.length === 0) return ''
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+    return parts.map((p) => p[0]).join('').toUpperCase()
+  }
+
+  // Rendered markdown can contain links (e.g. "see #123" → a Redmine URL);
+  // clicking one should open the user's browser, not navigate the webview
+  // itself away from the app.
+  function onRenderedClick(e: MouseEvent) {
+    const link = (e.target as HTMLElement).closest('a')
+    if (!link) return
+    const href = link.getAttribute('href')
+    if (!href) return
+    e.preventDefault()
+    openExternal(href)
+  }
+
   function onSearchInput() {
     if (searchTimer) clearTimeout(searchTimer)
     const q = searchQuery.trim()
@@ -303,7 +324,6 @@
     createError = ''
     selected = null
     showForm = true
-    manualProject = false
     if (formProvider) {
       loadProjectOptions(formProvider)
     }
@@ -312,7 +332,6 @@
   function onProviderChange(e: Event) {
     formProvider = (e.target as HTMLSelectElement).value
     formProject = ''
-    manualProject = false
     loadProjectOptions(formProvider)
   }
 
@@ -337,7 +356,6 @@
     createError = ''
     projectOptions = []
     projectLoadError = ''
-    manualProject = false
   }
 
   async function submitForm() {
@@ -537,6 +555,8 @@
                 <th class="th-dot"></th>
                 <th>{$_('tasks.colTitle')}</th>
                 <th>{$_('tasks.colProject')}</th>
+                <th>{$_('tasks.colAuthor')}</th>
+                <th>{$_('tasks.colAssignee')}</th>
                 <th>{$_('tasks.colStatus')}</th>
                 <th>{$_('tasks.colUpdated')}</th>
                 <th class="th-star"></th>
@@ -554,6 +574,12 @@
                   <td><span class="dot {item.type}"></span></td>
                   <td class="cell-title">{item.title}</td>
                   <td class="cell-muted cell-project" title={item.project}>{item.project}</td>
+                  <td class="cell-author" title={item.author}>
+                    {#if item.author}<span class="person-badge">{initials(item.author)}</span>{/if}
+                  </td>
+                  <td class="cell-assignee" title={item.assignee}>
+                    {#if item.assignee}<span class="person-badge">{initials(item.assignee)}</span>{/if}
+                  </td>
                   <td class="cell-muted">{item.status}</td>
                   <td class="cell-muted">{relativeTime(item.updatedAt)}</td>
                   <td>
@@ -609,29 +635,17 @@
       </label>
 
       <label class="form-field">
-        <span>{$_('tasks.formProject')}{#if formProviderInfo && !showProjectDropdown} — {$_(formProviderInfo.projectHint)}{/if}</span>
+        <span>{$_('tasks.formProject')}{#if formProviderInfo} — {$_(formProviderInfo.projectHint)}{/if}</span>
+        <input type="text" list="new-task-project-options" bind:value={formProject} placeholder={formProviderInfo ? $_(formProviderInfo.projectHint) : ''} />
+        <datalist id="new-task-project-options">
+          {#each projectOptions as opt (opt.value)}
+            <option value={opt.value} label={opt.label}>{opt.label}</option>
+          {/each}
+        </datalist>
         {#if loadingProjects}
           <p class="hint small">{$_('tasks.formProjectLoading')}</p>
-        {:else if showProjectDropdown}
-          <select bind:value={formProject}>
-            <option value="" disabled>{$_('tasks.formProjectChoose')}</option>
-            {#each projectOptions as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-          <button type="button" class="link-btn" on:click={() => { manualProject = true; formProject = '' }}>
-            {$_('tasks.formProjectManual')}
-          </button>
-        {:else}
-          {#if projectLoadError}
-            <p class="hint small">{$_('tasks.formProjectLoadError')}</p>
-          {/if}
-          <input type="text" bind:value={formProject} placeholder={formProviderInfo ? $_(formProviderInfo.projectHint) : ''} />
-          {#if projectOptions.length > 0}
-            <button type="button" class="link-btn" on:click={() => (manualProject = false)}>
-              {$_('tasks.formProjectFromList')}
-            </button>
-          {/if}
+        {:else if projectLoadError}
+          <p class="hint small">{$_('tasks.formProjectLoadError')}</p>
         {/if}
       </label>
 
@@ -679,7 +693,7 @@
         </p>
 
         {#if selected.description}
-          <pre class="description">{selected.description}</pre>
+          <div class="description" role="presentation" on:click={onRenderedClick}>{@html renderMarkdown(selected.description)}</div>
         {:else}
           <p class="hint">{$_('tasks.detailNoDescription')}</p>
         {/if}
@@ -700,7 +714,7 @@
                     <span class="comment-author">{c.author || $_('tasks.detailSomeone')}</span>
                     <span class="comment-date">{relativeTime(c.createdAt)}</span>
                   </div>
-                  <p class="comment-body">{c.body}</p>
+                  <div class="comment-body" role="presentation" on:click={onRenderedClick}>{@html renderMarkdown(c.body)}</div>
                 </li>
               {/each}
             </ul>
@@ -1184,6 +1198,27 @@
     text-overflow: ellipsis;
   }
 
+  .cell-author,
+  .cell-assignee {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .person-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 0.25em;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
   .table-detail {
     flex: 1;
     overflow-y: auto;
@@ -1236,13 +1271,67 @@
   }
 
   .description {
-    white-space: pre-wrap;
     word-wrap: break-word;
     font-family: inherit;
     font-size: 0.9rem;
     line-height: 1.55;
     color: var(--text);
     margin: 0 0 1.5rem;
+  }
+
+  .description :global(p),
+  .comment-body :global(p) {
+    margin: 0 0 0.75em;
+  }
+
+  .description :global(p:last-child),
+  .comment-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .description :global(ul),
+  .description :global(ol),
+  .comment-body :global(ul),
+  .comment-body :global(ol) {
+    margin: 0 0 0.75em;
+    padding-left: 1.4em;
+  }
+
+  .description :global(code),
+  .comment-body :global(code) {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.85em;
+    background: var(--bg-elevated);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+
+  .description :global(pre),
+  .comment-body :global(pre) {
+    background: var(--bg-elevated);
+    padding: 0.6em 0.75em;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    margin: 0 0 0.75em;
+  }
+
+  .description :global(pre code),
+  .comment-body :global(pre code) {
+    background: none;
+    padding: 0;
+  }
+
+  .description :global(blockquote),
+  .comment-body :global(blockquote) {
+    margin: 0 0 0.75em;
+    padding-left: 0.75em;
+    border-left: 2px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  .description :global(a),
+  .comment-body :global(a) {
+    color: var(--accent);
   }
 
   .comments {

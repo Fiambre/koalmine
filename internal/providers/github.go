@@ -461,19 +461,38 @@ func (p *githubProvider) currentLogin(ctx context.Context, cfg Config) (string, 
 
 func githubToTaskItem(issue githubIssue, itemType ItemType) TaskItem {
 	updatedAt, _ := time.Parse(time.RFC3339, issue.UpdatedAt)
+	repo := repoNameFromURL(issue.RepositoryURL)
 	return TaskItem{
-		ID:          fmt.Sprintf("github:%d", issue.ID),
-		Provider:    "github",
-		Type:        itemType,
-		Title:       issue.Title,
-		URL:         issue.HTMLURL,
-		Project:     repoNameFromURL(issue.RepositoryURL),
+		ID:       fmt.Sprintf("github:%d", issue.ID),
+		Provider: "github",
+		Type:     itemType,
+		Title:    issue.Title,
+		URL:      issue.HTMLURL,
+		// "owner/repo" already is GitHub's own identifier shape (same as
+		// ProjectOption.Value/CreateItemInput.Project), so ProjectKey just
+		// mirrors Project here — unlike Redmine, there's no separate
+		// display-name-vs-identifier split to bridge.
+		Project:     repo,
+		ProjectKey:  repo,
 		Status:      issue.State,
 		Closed:      issue.State == "closed",
 		Author:      issue.User.Login,
+		Assignee:    githubAssigneeNames(issue.Assignees),
 		Description: issue.Body,
 		UpdatedAt:   updatedAt,
 	}
+}
+
+// githubAssigneeNames joins a GitHub issue's assignee logins (an issue can
+// have several) into one display string — "" when unassigned.
+func githubAssigneeNames(assignees []struct {
+	Login string `json:"login"`
+}) string {
+	names := make([]string, 0, len(assignees))
+	for _, a := range assignees {
+		names = append(names, a.Login)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (p *githubProvider) newRequest(ctx context.Context, cfg Config, method, path string, body io.Reader) (*http.Request, error) {
@@ -517,5 +536,8 @@ type githubIssue struct {
 	User          struct {
 		Login string `json:"login"`
 	} `json:"user"`
+	Assignees []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 }
