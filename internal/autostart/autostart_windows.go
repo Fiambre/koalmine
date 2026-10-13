@@ -51,6 +51,45 @@ func Enable() error {
 	return key.SetStringValue(valueName, `"`+exePath+`"`)
 }
 
+// registeredPath returns the exact command string currently stored in the
+// Run value (quotes included), or "" if there is none — used by tests to
+// save and restore the real value around a round-trip, since Enable()
+// always writes the calling process's own os.Executable() path and so
+// can't be used to "restore" an arbitrary previous registration.
+func registeredPath() (string, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE)
+	if err == registry.ErrNotExist {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer key.Close()
+
+	v, _, err := key.GetStringValue(valueName)
+	if err == registry.ErrNotExist {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// setRegisteredPath writes raw to the Run value directly (or removes it, for
+// ""), bypassing Enable()'s os.Executable() lookup — see registeredPath.
+func setRegisteredPath(raw string) error {
+	if raw == "" {
+		return Disable()
+	}
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	return key.SetStringValue(valueName, raw)
+}
+
 // Disable removes the login registration, if any.
 func Disable() error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE)

@@ -124,7 +124,15 @@ func (a *App) showWindow() {
 		return
 	}
 	wailsRuntime.WindowShow(a.ctx)
-	wailsRuntime.WindowUnminimise(a.ctx)
+	// Only unminimise if the window is actually minimised: Wails'
+	// WindowUnminimise sends a plain "restore" command, which on Windows
+	// also un-maximises a window that's maximised but not minimised (e.g.
+	// one that was hidden via the tray/hotkey while maximised — hiding
+	// doesn't minimise it, it just stops rendering) — calling it
+	// unconditionally silently dropped that maximised state every time.
+	if wailsRuntime.WindowIsMinimised(a.ctx) {
+		wailsRuntime.WindowUnminimise(a.ctx)
+	}
 	a.windowMu.Lock()
 	a.windowVisible = true
 	a.windowMu.Unlock()
